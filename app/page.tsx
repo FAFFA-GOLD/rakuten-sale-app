@@ -672,7 +672,7 @@ ${bodyContent}
         <header className="mb-8 flex items-center justify-between bg-white p-6 rounded-xl shadow-md border-b-4 border-red-500">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold text-gray-800">🛍️ 楽天スーパーセール作成ツール</h1>
-            <span className="text-xs bg-red-100 text-red-600 px-2 py-1 rounded-full font-bold">Ver 1.6</span>
+            <span className="text-xs bg-red-100 text-red-600 px-2 py-1 rounded-full font-bold">Ver 1.5</span>
           </div>
           <button 
             onClick={() => signOut()} 
