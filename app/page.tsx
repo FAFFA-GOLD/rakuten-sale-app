@@ -152,7 +152,9 @@ export default function Home() {
       if (block.type !== 'product_grid') return block;
       const b = block as ProductGridBlock;
       
-      const newHeroProducts = b.heroProducts.map(hp => {
+      // 安全策: heroProductsが存在しない場合は空配列にする
+      const currentHeroProducts = b.heroProducts || [];
+      const newHeroProducts = currentHeroProducts.map(hp => {
         const found = findProductData(hp.code, data, currentShopId);
         if (found) return { ...found, comment: hp.comment };
         return hp;
@@ -191,9 +193,24 @@ export default function Home() {
       try {
         const json = JSON.parse(event.target?.result as string);
         if (json.shopId) setShopId(json.shopId);
-        if (json.blocks) setBlocks(json.blocks);
         if (json.popupImage) setPopupImage(json.popupImage);
         if (json.popupLink) setPopupLink(json.popupLink);
+        
+        // ★重要: データ移行ロジック (古いJSONを新しい形式に変換)
+        if (json.blocks) {
+          const migratedBlocks = json.blocks.map((b: any) => {
+            // product_gridブロックで、heroProductsがない場合
+            if (b.type === 'product_grid') {
+              if (!b.heroProducts) {
+                // 古い heroProduct (単体) があれば配列に入れる
+                b.heroProducts = b.heroProduct ? [b.heroProduct] : [];
+              }
+            }
+            return b;
+          });
+          setBlocks(migratedBlocks);
+        }
+        
         alert("プロジェクトを復元しました。");
       } catch (err) {
         alert("ファイルの読み込みに失敗しました。");
@@ -219,7 +236,7 @@ export default function Home() {
       case 'product_grid': default:
         newBlock = { 
           ...base, type: 'product_grid', title: "カテゴリ名", bgColor: "#ffffff", 
-          heroMode: 'product', heroProducts: [], 
+          heroMode: 'product', heroProducts: [], // 初期化
           heroBanner: { imageUrl: "", linkUrl: "" }, 
           gridProducts: [],
           bottomButtonText: "", bottomButtonLink: "", bottomButtonBgColor: "#bf0000", bottomButtonTextColor: "#ffffff" 
@@ -244,13 +261,14 @@ export default function Home() {
     if (!p) return;
     updateBlock(blockId, (block) => {
       const b = block as ProductGridBlock;
-      return { ...b, heroProducts: [...b.heroProducts, { ...p, comment: "" }] }; 
+      const current = b.heroProducts || [];
+      return { ...b, heroProducts: [...current, { ...p, comment: "" }] }; 
     });
   };
   const removeHeroProduct = (blockId: string, index: number) => {
     updateBlock(blockId, (block) => {
       const b = block as ProductGridBlock;
-      const newHeroes = b.heroProducts.filter((_, i) => i !== index);
+      const newHeroes = (b.heroProducts || []).filter((_, i) => i !== index);
       return { ...b, heroProducts: newHeroes };
     });
   };
@@ -259,7 +277,7 @@ export default function Home() {
     if (!p) return;
     updateBlock(blockId, (block) => {
       const b = block as ProductGridBlock;
-      const newHeroes = [...b.heroProducts];
+      const newHeroes = [...(b.heroProducts || [])];
       newHeroes[index] = { ...p, comment: newHeroes[index].comment }; 
       return { ...b, heroProducts: newHeroes };
     });
@@ -267,7 +285,7 @@ export default function Home() {
   const updateHeroProductComment = (blockId: string, index: number, comment: string) => {
     updateBlock(blockId, (block) => {
       const b = block as ProductGridBlock;
-      const newHeroes = [...b.heroProducts];
+      const newHeroes = [...(b.heroProducts || [])];
       newHeroes[index] = { ...newHeroes[index], comment };
       return { ...b, heroProducts: newHeroes };
     });
@@ -413,8 +431,11 @@ export default function Home() {
       } else if (block.type === 'product_grid') {
         bodyContent += `<div id="cat-${block.id}" class="cat-title">${block.title}</div>`;
         
-        if ((block as ProductGridBlock).heroMode === 'product' && (block as ProductGridBlock).heroProducts.length > 0) {
-          (block as ProductGridBlock).heroProducts.forEach(product => {
+        // ★目玉商品: 安全に配列展開
+        const heroes = (block as ProductGridBlock).heroProducts || [];
+        
+        if ((block as ProductGridBlock).heroMode === 'product' && heroes.length > 0) {
+          heroes.forEach(product => {
             bodyContent += `<div class="hero-area">
               <div class="hero-img-container">
                 <img src="${product.imageUrl}">
@@ -624,7 +645,7 @@ ${bodyContent}
   };
 
   // ---------------------------------------------------------
-  // ▼ UIコンポーネント (デザイン刷新)
+  // ▼ UIコンポーネント
   // ---------------------------------------------------------
   
   const PriceDisplay = ({ price, refPrice, isHero = false }: { price: string, refPrice: string, isHero?: boolean }) => (
@@ -672,7 +693,7 @@ ${bodyContent}
         <header className="mb-8 flex items-center justify-between bg-white p-6 rounded-xl shadow-md border-b-4 border-red-500">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold text-gray-800">🛍️ 楽天スーパーセール作成ツール</h1>
-            <span className="text-xs bg-red-100 text-red-600 px-2 py-1 rounded-full font-bold">Ver 1.6</span>
+            <span className="text-xs bg-red-100 text-red-600 px-2 py-1 rounded-full font-bold">Ver 1.7</span>
           </div>
           <button 
             onClick={() => signOut()} 
@@ -852,11 +873,7 @@ ${bodyContent}
                         {block.heroMode === 'product' ? (
                           <div className="space-y-4">
                               {/* 既存の目玉商品リスト */}
-                              {block.heroProducts.length === 0 && (
-                                <p className="text-xs text-gray-400 text-center py-4 bg-white rounded border border-dashed">目玉商品がまだありません</p>
-                              )}
-
-                              {block.heroProducts.map((p, i) => (
+                              {(block.heroProducts || []).map((p, i) => (
                                   <div key={i} className="text-center relative bg-white p-3 rounded-lg border border-red-200 shadow-sm transition-all hover:shadow-md">
                                       <div className="group relative inline-block w-full">
                                           <img src={p.imageUrl} className="w-full h-40 object-contain bg-white mb-2 rounded"/>
@@ -873,7 +890,7 @@ ${bodyContent}
                                   </div>
                               ))}
 
-                              {/* ★修正: 追加フォームをリストの下に配置 */}
+                              {/* 追加フォームをリストの下に配置 */}
                               <div className="flex gap-2 mt-2 p-2 bg-white/50 rounded border border-dashed border-red-200 items-center">
                                   <span className="text-xl text-red-400">➕</span>
                                   <input id={`hero-add-${block.id}`} placeholder="商品番号を入力してEnter" className="w-full p-2 border text-sm rounded focus:ring-2 focus:ring-red-200 outline-none bg-white" onKeyDown={(e) => {
