@@ -26,7 +26,7 @@ type Product = {
   code: string; name: string; price: string; refPrice: string; imageUrl: string; url: string; comment: string; 
 };
 type ImageItem = { imageUrl: string; linkUrl: string; };
-type BlockType = 'top_image' | 'banner_list' | 'coupon_list' | 'product_grid' | 'custom_html' | 'spacer' | 'timer_banner';
+type BlockType = 'top_image' | 'banner_list' | 'coupon_list' | 'product_grid' | 'custom_html' | 'spacer';
 
 interface BaseBlock { id: string; type: BlockType; }
 interface TopImageBlock extends BaseBlock { type: 'top_image'; imageUrl: string; linkUrl: string; }
@@ -34,16 +34,13 @@ interface BannerListBlock extends BaseBlock { type: 'banner_list'; banners: Imag
 interface CouponListBlock extends BaseBlock { type: 'coupon_list'; coupons: ImageItem[]; }
 interface CustomHtmlBlock extends BaseBlock { type: 'custom_html'; content: string; }
 interface SpacerBlock extends BaseBlock { type: 'spacer'; height: number; }
-interface TimerBannerBlock extends BaseBlock {
-  type: 'timer_banner'; imageUrl: string; linkUrl: string; startTime: string; endTime: string;
-}
 
 interface ProductGridBlock extends BaseBlock {
   type: 'product_grid'; 
   title: string; 
   bgColor: string;
   heroMode: 'product' | 'banner'; 
-  heroProducts: Product[]; // ★修正: 配列に変更
+  heroProduct: Product | null; 
   heroBanner: ImageItem; 
   gridProducts: Product[];
   bottomButtonText?: string;
@@ -52,7 +49,7 @@ interface ProductGridBlock extends BaseBlock {
   bottomButtonTextColor?: string;
 }
 
-type Block = TopImageBlock | BannerListBlock | TimerBannerBlock | CouponListBlock | CustomHtmlBlock | SpacerBlock | ProductGridBlock;
+type Block = TopImageBlock | BannerListBlock | CouponListBlock | CustomHtmlBlock | SpacerBlock | ProductGridBlock;
 
 // ==========================================
 // ▼ メインコンポーネント
@@ -66,6 +63,9 @@ export default function Home() {
   
   const [popupImage, setPopupImage] = useState("");
   const [popupLink, setPopupLink] = useState("");
+
+  // ★修正: 抜けていた定義を追加
+  const [isLoading, setIsLoading] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -124,43 +124,50 @@ export default function Home() {
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    
+    // ★修正: ローディング開始
+    setIsLoading(true);
     setCsvFileName(file.name);
     
-    Papa.parse(file, {
-      header: true, skipEmptyLines: true, encoding: "Shift-JIS",
-      complete: (results) => { 
-        const newData = results.data;
-        setCsvData(newData);
-        if (blocks.length > 0 && shopId) {
-          if (confirm("新しいCSVデータに基づいて、配置済み商品の価格や情報を更新しますか？")) {
-            refreshBlocksWithNewData(newData, shopId);
+    // 描画更新のために少し待つ
+    setTimeout(() => {
+      Papa.parse(file, {
+        header: true, skipEmptyLines: true, encoding: "Shift-JIS",
+        complete: (results) => { 
+          const newData = results.data;
+          setCsvData(newData);
+          if (blocks.length > 0 && shopId) {
+            if (confirm("新しいCSVデータに基づいて、配置済み商品の価格や情報を更新しますか？")) {
+              refreshBlocksWithNewData(newData, shopId);
+            }
+          } else {
+            alert(`読み込み完了: ${newData.length}行`); 
           }
-        } else {
-          alert(`読み込み完了: ${newData.length}行`); 
+          setIsLoading(false); // ★修正: 完了
+        },
+        error: () => {
+          alert("読み込み失敗");
+          setIsLoading(false); // ★修正: エラー時も解除
         }
-      },
-      error: () => alert("読み込み失敗")
-    });
+      });
+    }, 100);
   };
 
   const refreshBlocksWithNewData = (data: any[], currentShopId: string) => {
     const newBlocks = blocks.map(block => {
       if (block.type !== 'product_grid') return block;
       const b = block as ProductGridBlock;
-      
-      // ★目玉商品の更新
-      const newHeroProducts = b.heroProducts.map(hp => {
-        const found = findProductData(hp.code, data, currentShopId);
-        if (found) return { ...found, comment: hp.comment };
-        return hp;
-      });
-
+      let newHero = b.heroProduct;
+      if (b.heroMode === 'product' && b.heroProduct) {
+        const found = findProductData(b.heroProduct.code, data, currentShopId);
+        if (found) newHero = { ...found, comment: b.heroProduct.comment };
+      }
       const newGrid = b.gridProducts.map(p => {
         const found = findProductData(p.code, data, currentShopId);
         if (found) return { ...found, comment: p.comment };
         return p;
       });
-      return { ...b, heroProducts: newHeroProducts, gridProducts: newGrid }; // 変更
+      return { ...b, heroProduct: newHero, gridProducts: newGrid };
     });
     setBlocks(newBlocks);
     alert("商品情報を最新のCSVデータで更新しました！");
@@ -182,6 +189,9 @@ export default function Home() {
   const loadProject = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    
+    setIsLoading(true); // ★修正: ローディング開始
+    
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
@@ -193,6 +203,8 @@ export default function Home() {
         alert("プロジェクトを復元しました。");
       } catch (err) {
         alert("ファイルの読み込みに失敗しました。");
+      } finally {
+        setIsLoading(false); // ★修正: 完了
       }
     };
     reader.readAsText(file);
@@ -209,18 +221,19 @@ export default function Home() {
       case 'coupon_list': newBlock = { ...base, type, coupons: [] }; break;
       case 'custom_html': newBlock = { ...base, type, content: "" }; break;
       case 'spacer': newBlock = { ...base, type, height: 50 }; break;
-      case 'timer_banner': newBlock = { ...base, type, imageUrl: "", linkUrl: "", startTime: "", endTime: "" }; break;
       case 'product_grid': default:
         newBlock = { 
           ...base, type: 'product_grid', title: "カテゴリ名", bgColor: "#ffffff", 
-          heroMode: 'product', heroProducts: [], // ★配列で初期化
-          heroBanner: { imageUrl: "", linkUrl: "" }, 
+          heroMode: 'product', heroProduct: null, heroBanner: { imageUrl: "", linkUrl: "" }, 
           gridProducts: [],
           bottomButtonText: "", bottomButtonLink: "", bottomButtonBgColor: "#bf0000", bottomButtonTextColor: "#ffffff" 
         }; break;
     }
     setBlocks([...blocks, newBlock]);
-    setTimeout(() => { window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' }); }, 100);
+    
+    setTimeout(() => {
+      window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    }, 100);
   };
 
   const removeBlock = (id: string) => { if (confirm("削除しますか？")) setBlocks(blocks.filter(b => b.id !== id)); };
@@ -232,44 +245,6 @@ export default function Home() {
   };
   const updateBlock = (id: string, updater: (b: Block) => Block) => setBlocks(blocks.map(b => b.id === id ? updater(b) : b));
 
-  // ★目玉商品専用の操作関数
-  const addHeroProduct = (blockId: string, code: string) => {
-    const p = searchCsvProduct(code);
-    if (!p) return;
-    updateBlock(blockId, (block) => {
-      const b = block as ProductGridBlock;
-      // 既存のコメントなどは空で追加
-      return { ...b, heroProducts: [...b.heroProducts, { ...p, comment: "" }] }; 
-    });
-  };
-  const removeHeroProduct = (blockId: string, index: number) => {
-    updateBlock(blockId, (block) => {
-      const b = block as ProductGridBlock;
-      const newHeroes = b.heroProducts.filter((_, i) => i !== index);
-      return { ...b, heroProducts: newHeroes };
-    });
-  };
-  const updateHeroProductInfo = (blockId: string, index: number, newCode: string) => {
-    const p = searchCsvProduct(newCode);
-    if (!p) return;
-    updateBlock(blockId, (block) => {
-      const b = block as ProductGridBlock;
-      const newHeroes = [...b.heroProducts];
-      // コメントは維持して上書き
-      newHeroes[index] = { ...p, comment: newHeroes[index].comment }; 
-      return { ...b, heroProducts: newHeroes };
-    });
-  };
-  const updateHeroProductComment = (blockId: string, index: number, comment: string) => {
-    updateBlock(blockId, (block) => {
-      const b = block as ProductGridBlock;
-      const newHeroes = [...b.heroProducts];
-      newHeroes[index] = { ...newHeroes[index], comment };
-      return { ...b, heroProducts: newHeroes };
-    });
-  };
-  
-  // 商品移動・更新 (通常グリッド用 - 変更なし)
   const moveProduct = (blockId: string, index: number, direction: number) => {
     updateBlock(blockId, (block) => {
       const b = block as ProductGridBlock;
@@ -323,25 +298,6 @@ export default function Home() {
   document.getElementById("closeBtn").onclick = function() { document.getElementById("popup").style.display = "none"; };
 </script>` : '';
 
-    const timerScript = `
-<script>
-  (function(){
-    var now = new Date().getTime();
-    var banners = document.querySelectorAll('.timer-banner');
-    if(banners.length === 0) return;
-    banners.forEach(function(banner){
-      var s = banner.getAttribute('data-start');
-      var e = banner.getAttribute('data-end');
-      var start = s ? new Date(s).getTime() : null;
-      var end = e ? new Date(e).getTime() : null;
-      if(start && now < start) { banner.style.display = 'none'; return; }
-      if(end && now > end) { banner.style.display = 'none'; return; }
-      banner.style.display = 'block';
-    });
-  })();
-</script>
-`;
-
     let bodyContent = `
 <div id="rakuten-sale-app">
   ${popupScript}
@@ -364,8 +320,6 @@ export default function Home() {
         bodyContent += `<div class="sale-content-inner">`;
       }
 
-      // --- 各ブロックHTML出力 ---
-
       if (block.type === 'top_image') {
         bodyContent += block.imageUrl ? `
         <div class="top-image">
@@ -375,15 +329,6 @@ export default function Home() {
         </div>` : '';
       } else if (block.type === 'spacer') {
         bodyContent += `<div class="spacer" style="height: ${block.height}px;"></div>`;
-      } else if (block.type === 'timer_banner') {
-        if (block.imageUrl) {
-          bodyContent += `
-          <div class="timer-banner banner-stack" data-start="${block.startTime}" data-end="${block.endTime}" style="margin-bottom:30px;">
-            ${block.linkUrl ? `<a href="${block.linkUrl}" target="_blank" style="text-decoration:none; border:none;">` : ''}
-            <img src="${block.imageUrl}" style="width:100%">
-            ${block.linkUrl ? `</a>` : ''}
-          </div>`;
-        }
       } else if (block.type === 'banner_list') {
         if (block.banners.length > 0) {
           bodyContent += `<div class="banner-stack">
@@ -411,31 +356,26 @@ export default function Home() {
       } else if (block.type === 'product_grid') {
         bodyContent += `<div id="cat-${block.id}" class="cat-title">${block.title}</div>`;
         
-        // ★ 目玉商品リストをループで出力
-        if ((block as ProductGridBlock).heroMode === 'product' && (block as ProductGridBlock).heroProducts.length > 0) {
-          (block as ProductGridBlock).heroProducts.forEach(product => {
-            bodyContent += `<div class="hero-area">
-              <div class="hero-img-container">
-                <img src="${product.imageUrl}">
-                ${product.comment ? `<div class="comment-bubble">${product.comment}</div>` : ''}
-              </div>
-              <div class="hero-info">
-                <div class="hero-name">${product.name}</div>
-                <div class="price-box">
-                  ${product.refPrice ? `<span class="price-ref">${Number(product.refPrice).toLocaleString()}円</span><span class="price-arrow">➡</span>` : ''}
-                  <span class="price-sale">${Number(product.price).toLocaleString()}円</span>
-                </div>
-                <a href="${product.url}" target="_blank" class="btn-buy" style="text-decoration:none !important;">商品ページへ</a>
-              </div>
-            </div>`;
-          });
-        }
-        // 元の単一バナーモード
-        else if (block.heroMode === 'banner' && block.heroBanner.imageUrl) {
+        if (block.heroMode === 'banner' && block.heroBanner.imageUrl) {
           bodyContent += `<div style="margin-bottom: 20px;">
             ${block.heroBanner.linkUrl ? `<a href="${block.heroBanner.linkUrl}" target="_blank" style="text-decoration:none; border:none;">` : ''}
             <img src="${block.heroBanner.imageUrl}" class="hero-banner-img" alt="Featured" style="width:100%">
             ${block.heroBanner.linkUrl ? `</a>` : ''}
+          </div>`;
+        } else if (block.heroMode === 'product' && block.heroProduct) {
+          bodyContent += `<div class="hero-area">
+            <div class="hero-img-container">
+              <img src="${block.heroProduct.imageUrl}">
+              ${block.heroProduct.comment ? `<div class="comment-bubble">${block.heroProduct.comment}</div>` : ''}
+            </div>
+            <div class="hero-info">
+              <div class="hero-name">${block.heroProduct.name}</div>
+              <div class="price-box">
+                ${block.heroProduct.refPrice ? `<span class="price-ref">${Number(block.heroProduct.refPrice).toLocaleString()}円</span><span class="price-arrow">➡</span>` : ''}
+                <span class="price-sale">${Number(block.heroProduct.price).toLocaleString()}円</span>
+              </div>
+              <a href="${block.heroProduct.url}" target="_blank" class="btn-buy" style="text-decoration:none !important;">商品ページへ</a>
+            </div>
           </div>`;
         }
 
@@ -478,7 +418,6 @@ export default function Home() {
     });
     
     bodyContent += `</div>`;
-    bodyContent += timerScript;
 
     const fullHTML = `<!DOCTYPE html>
 <html lang="ja">
@@ -672,7 +611,7 @@ ${bodyContent}
         <header className="mb-8 flex items-center justify-between bg-white p-6 rounded-xl shadow-md border-b-4 border-red-500">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold text-gray-800">🛍️ 楽天スーパーセール作成ツール</h1>
-            <span className="text-xs bg-red-100 text-red-600 px-2 py-1 rounded-full font-bold">Ver 1.5</span>
+            <span className="text-xs bg-red-100 text-red-600 px-2 py-1 rounded-full font-bold">Ver 1.6</span>
           </div>
           <button 
             onClick={() => signOut()} 
@@ -755,7 +694,6 @@ ${bodyContent}
                     {block.type === 'coupon_list' && "🎟️ クーポン一覧"}
                     {block.type === 'custom_html' && "💻 自由HTML"}
                     {block.type === 'spacer' && "⬜ 空白スペース"}
-                    {block.type === 'timer_banner' && "⏳ 期間限定バナー"}
                     {block.type === 'product_grid' && "🛍️ 商品カテゴリ"}
                   </span>
                 </div>
@@ -775,22 +713,6 @@ ${bodyContent}
                 )}
                 {block.type === 'top_image' && (
                   <ImageLinkInput img={block.imageUrl} link={block.linkUrl} onChange={(img, link) => updateBlock(block.id, b => ({ ...b, imageUrl: img, linkUrl: link } as TopImageBlock))} />
-                )}
-                {block.type === 'timer_banner' && (
-                  <div className="bg-orange-50 p-4 rounded border border-orange-100">
-                    <p className="text-xs font-bold text-orange-800 mb-2">※表示期間の設定（HTML埋め込み時に自動制御されます）</p>
-                    <div className="grid grid-cols-2 gap-4 mb-3">
-                      <div>
-                        <span className="text-xs font-bold block">開始日時</span>
-                        <input type="datetime-local" value={block.startTime} onChange={(e) => updateBlock(block.id, b => ({ ...b, startTime: e.target.value } as TimerBannerBlock))} className="border p-2 w-full text-sm rounded"/>
-                      </div>
-                      <div>
-                        <span className="text-xs font-bold block">終了日時</span>
-                        <input type="datetime-local" value={block.endTime} onChange={(e) => updateBlock(block.id, b => ({ ...b, endTime: e.target.value } as TimerBannerBlock))} className="border p-2 w-full text-sm rounded"/>
-                      </div>
-                    </div>
-                    <ImageLinkInput img={block.imageUrl} link={block.linkUrl} label="バナー" onChange={(img, link) => updateBlock(block.id, b => ({ ...b, imageUrl: img, linkUrl: link } as TimerBannerBlock))} />
-                  </div>
                 )}
                 {block.type === 'banner_list' && (
                   <div>
@@ -850,43 +772,24 @@ ${bodyContent}
                         </div>
                         
                         {block.heroMode === 'product' ? (
-                          <div className="space-y-4">
-                              {/* 目玉商品追加フォーム */}
-                              <div className="flex gap-2 mb-3">
-                                  <input id={`hero-add-${block.id}`} placeholder="商品番号を追加" className="w-full p-2 border text-sm rounded focus:ring-2 focus:ring-red-200 outline-none"/>
-                                  <button onClick={() => { 
-                                      const val = (document.getElementById(`hero-add-${block.id}`) as HTMLInputElement).value;
-                                      if(val) { addHeroProduct(block.id, val); }
-                                  }} className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 text-sm rounded font-bold shadow transition-colors">追加</button>
+                          block.heroProduct ? (
+                            <div className="text-center relative bg-white p-3 rounded-lg border border-red-200 shadow-sm">
+                              <div className="group relative inline-block w-full">
+                                <img src={block.heroProduct.imageUrl} className="w-full h-40 object-contain bg-white mb-2 rounded"/>
+                                {block.heroProduct.comment && <PreviewBubble text={block.heroProduct.comment} />}
                               </div>
-
-                              {/* 既存の目玉商品リスト */}
-                              {block.heroProducts.map((p, i) => (
-                                  <div key={i} className="text-center relative bg-white p-3 rounded-lg border border-red-200 shadow-sm">
-                                      <div className="group relative inline-block w-full">
-                                          <img src={p.imageUrl} className="w-full h-40 object-contain bg-white mb-2 rounded"/>
-                                          {p.comment && <PreviewBubble text={p.comment} />}
-                                      </div>
-                                      <input type="text" placeholder="吹き出しコメント..." value={p.comment} onChange={(e) => updateHeroProductComment(block.id, i, e.target.value)} className="border p-1 w-full mb-2 text-xs bg-yellow-50 rounded focus:ring-1 focus:ring-yellow-400 outline-none"/>
-                                      <p className="text-xs line-clamp-2 h-8 mb-1 text-gray-700">{p.name}</p>
-                                      <PriceDisplay price={p.price} refPrice={p.refPrice} isHero={true} />
-                                      
-                                      {/* 操作ボタン */}
-                                      <div className="mt-2 flex justify-center gap-2">
-                                          <button onClick={() => updateHeroProductInfo(block.id, i, prompt("新しい商品管理番号", p.code) || p.code)} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-2 py-1 rounded text-xs font-bold transition-colors">🖊 変更</button>
-                                          <button onClick={() => removeHeroProduct(block.id, i)} className="bg-red-100 hover:bg-red-200 text-red-700 px-2 py-1 rounded text-xs font-bold transition-colors">🗑 削除</button>
-                                      </div>
-                                  </div>
-                              ))}
-                          </div>
+                              <input type="text" placeholder="吹き出しコメント..." value={block.heroProduct.comment || ""} onChange={(e) => { const newHero = { ...block.heroProduct!, comment: e.target.value }; updateBlock(block.id, b => ({ ...b, heroProduct: newHero } as ProductGridBlock)); }} className="border p-1 w-full mb-2 text-xs bg-yellow-50 rounded focus:ring-1 focus:ring-yellow-400 outline-none"/>
+                              <p className="text-xs line-clamp-2 h-8 mb-1 text-gray-700">{block.heroProduct.name}</p>
+                              <PriceDisplay price={block.heroProduct.price} refPrice={block.heroProduct.refPrice} isHero={true} />
+                              <button onClick={() => updateBlock(block.id, b => ({ ...b, heroProduct: null } as ProductGridBlock))} className="text-xs text-gray-400 underline hover:text-red-500 mt-2">解除</button>
+                            </div>
+                          ) : (
+                            <div className="flex gap-2">
+                              <input id={`hero-${block.id}`} placeholder="商品番号 (例: ab-123)" className="w-full p-2 border text-sm rounded focus:ring-2 focus:ring-red-200 outline-none"/>
+                              <button onClick={() => { const val = (document.getElementById(`hero-${block.id}`) as HTMLInputElement).value; const p = searchCsvProduct(val); if(p) updateBlock(block.id, b => ({ ...b, heroProduct: p } as ProductGridBlock)); }} className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 text-sm rounded font-bold shadow transition-colors">Set</button>
+                            </div>
+                          )
                         ) : (
-                          // 最初の目玉商品が無い場合の初期フォーム
-                          <div className="flex gap-2">
-                            <input id={`hero-add-${block.id}`} placeholder="商品番号 (例: ab-123)" className="w-full p-2 border text-sm rounded focus:ring-2 focus:ring-red-200 outline-none"/>
-                            <button onClick={() => { const val = (document.getElementById(`hero-add-${block.id}`) as HTMLInputElement).value; if(val) addHeroProduct(block.id, val); }} className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 text-sm rounded font-bold shadow transition-colors">Set</button>
-                          </div>
-                        )}
-                        {block.heroMode === 'banner' && (
                           <ImageLinkInput img={block.heroBanner.imageUrl} link={block.heroBanner.linkUrl} label="バナー" onChange={(img, link) => updateBlock(block.id, b => ({ ...b, heroBanner: { imageUrl: img, linkUrl: link } } as ProductGridBlock))} />
                         )}
                       </div>
@@ -912,13 +815,14 @@ ${bodyContent}
                               <input type="text" placeholder="吹き出し..." value={p.comment} onChange={(e) => { const newProds = [...block.gridProducts]; newProds[i] = { ...p, comment: e.target.value }; updateBlock(block.id, b => ({ ...b, gridProducts: newProds } as ProductGridBlock)); }} className="border p-1 w-full mb-1 text-[10px] bg-yellow-50 rounded focus:ring-1 focus:ring-yellow-400 outline-none"/>
                               <PriceDisplay price={p.price} refPrice={p.refPrice} isHero={false} />
                               
-                              <div className="flex justify-between mt-2 border-t pt-2">
+                              <div className="flex justify-between mt-2 border-t pt-1">
                                 <button onClick={() => moveProduct(block.id, i, -1)} disabled={i===0} className="text-gray-400 hover:text-blue-600 disabled:opacity-10 transition-colors">◀</button>
                                 <div className="flex gap-2">
+                                  {/* ★刷新された変更・削除ボタン */}
                                   <button onClick={() => { const newCode = prompt("新しい商品管理番号", p.code); if(newCode && newCode !== p.code) updateProductInfo(block.id, i, newCode); }} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-2 py-1 rounded text-xs font-bold transition-colors flex items-center gap-1">🖊変更</button>
                                   <button onClick={() => { const newGrid = block.gridProducts.filter((_, idx) => idx !== i); updateBlock(block.id, b => ({ ...b, gridProducts: newGrid } as ProductGridBlock)); }} className="bg-red-100 hover:bg-red-200 text-red-700 px-2 py-1 rounded text-xs font-bold transition-colors flex items-center gap-1">🗑削除</button>
                                 </div>
-                                <button onClick={() => moveProduct(block.id, i, 1)} disabled={i===block.gridProducts.length-1} className="text-gray-400 hover:text-blue-600 disabled:opacity-10 transition-colors">▶</button>
+                                <button onClick={() => moveProduct(block.id, i, 1)} disabled={i===block.gridProducts.length-1} className="text-gray-400 hover:text-black disabled:opacity-30 transition-colors">▶</button>
                               </div>
                             </div>
                           ))}
@@ -926,6 +830,7 @@ ${bodyContent}
                       </div>
                     </div>
 
+                    {/* 下部ボタン設定エリア */}
                     <div className="mt-6 p-5 bg-blue-50 border border-blue-100 rounded-xl">
                       <p className="font-bold text-sm text-blue-800 mb-3 flex items-center gap-2">🔘 下部ボタン設定 (任意)</p>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -963,7 +868,6 @@ ${bodyContent}
               <span className="text-xs font-bold text-gray-400 mr-2 self-center">ブロック追加:</span>
               <button onClick={() => addBlock('top_image')} className="bg-white hover:bg-gray-100 border border-gray-200 text-gray-700 px-3 py-2 rounded-lg font-bold text-xs shadow-sm transition-all hover:-translate-y-1">🖼️ トップ画像</button>
               <button onClick={() => addBlock('banner_list')} className="bg-white hover:bg-gray-100 border border-gray-200 text-gray-700 px-3 py-2 rounded-lg font-bold text-xs shadow-sm transition-all hover:-translate-y-1">📑 バナー</button>
-              <button onClick={() => addBlock('timer_banner')} className="bg-white hover:bg-gray-100 border border-gray-200 text-gray-700 px-3 py-2 rounded-lg font-bold text-xs shadow-sm transition-all hover:-translate-y-1">⏳ 期間バナー</button>
               <button onClick={() => addBlock('coupon_list')} className="bg-white hover:bg-gray-100 border border-gray-200 text-gray-700 px-3 py-2 rounded-lg font-bold text-xs shadow-sm transition-all hover:-translate-y-1">🎟️ クーポン</button>
               <button onClick={() => addBlock('custom_html')} className="bg-white hover:bg-gray-100 border border-gray-200 text-gray-700 px-3 py-2 rounded-lg font-bold text-xs shadow-sm transition-all hover:-translate-y-1">💻 自由HTML</button>
               <button onClick={() => addBlock('spacer')} className="bg-white hover:bg-gray-100 border border-gray-200 text-gray-700 px-3 py-2 rounded-lg font-bold text-xs shadow-sm transition-all hover:-translate-y-1">⬜ 空白</button>
