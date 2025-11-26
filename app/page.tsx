@@ -26,9 +26,7 @@ type Product = {
   code: string; name: string; price: string; refPrice: string; imageUrl: string; url: string; comment: string; 
 };
 type ImageItem = { imageUrl: string; linkUrl: string; };
-
-// ★ブロックタイプの追加: timer_banner
-type BlockType = 'top_image' | 'banner_list' | 'timer_banner' | 'coupon_list' | 'product_grid' | 'custom_html' | 'spacer';
+type BlockType = 'top_image' | 'banner_list' | 'coupon_list' | 'product_grid' | 'custom_html' | 'spacer' | 'timer_banner';
 
 interface BaseBlock { id: string; type: BlockType; }
 interface TopImageBlock extends BaseBlock { type: 'top_image'; imageUrl: string; linkUrl: string; }
@@ -36,16 +34,9 @@ interface BannerListBlock extends BaseBlock { type: 'banner_list'; banners: Imag
 interface CouponListBlock extends BaseBlock { type: 'coupon_list'; coupons: ImageItem[]; }
 interface CustomHtmlBlock extends BaseBlock { type: 'custom_html'; content: string; }
 interface SpacerBlock extends BaseBlock { type: 'spacer'; height: number; }
-
-// ★期間限定バナーブロック
 interface TimerBannerBlock extends BaseBlock {
-  type: 'timer_banner';
-  imageUrl: string;
-  linkUrl: string;
-  startTime: string; // YYYY-MM-DDTHH:mm
-  endTime: string;   // YYYY-MM-DDTHH:mm
+  type: 'timer_banner'; imageUrl: string; linkUrl: string; startTime: string; endTime: string;
 }
-
 interface ProductGridBlock extends BaseBlock {
   type: 'product_grid'; 
   title: string; 
@@ -75,9 +66,12 @@ export default function Home() {
   const [popupImage, setPopupImage] = useState("");
   const [popupLink, setPopupLink] = useState("");
 
+  // ★追加: ローディング状態管理
+  const [isLoading, setIsLoading] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // --- 内部ロジック ---
+  // --- 内部ロジック (計算・検索) ---
   const calcTax = (priceStr: string): string => {
     if (!priceStr) return "";
     const num = Number(priceStr.replace(/,/g, ""));
@@ -132,22 +126,37 @@ export default function Home() {
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    
+    // ★処理開始時にローディング表示
+    setIsLoading(true);
     setCsvFileName(file.name);
-    Papa.parse(file, {
-      header: true, skipEmptyLines: true, encoding: "Shift-JIS",
-      complete: (results) => { 
-        const newData = results.data;
-        setCsvData(newData);
-        if (blocks.length > 0 && shopId) {
-          if (confirm("新しいCSVデータに基づいて、配置済み商品の価格や情報を更新しますか？")) {
-            refreshBlocksWithNewData(newData, shopId);
+    
+    // 少し遅延させてUI描画を更新させる（Reactの仕様対策）
+    setTimeout(() => {
+      Papa.parse(file, {
+        header: true, skipEmptyLines: true, encoding: "Shift-JIS",
+        complete: (results) => { 
+          const newData = results.data;
+          setCsvData(newData);
+          
+          if (blocks.length > 0 && shopId) {
+            // ユーザー確認のため一旦ローディング解除しないとダイアログが出ない場合があるが、
+            // ここではダイアログ表示前もローディング維持
+            if (confirm("新しいCSVデータに基づいて、配置済み商品の価格や情報を更新しますか？")) {
+              refreshBlocksWithNewData(newData, shopId);
+            }
+          } else {
+            alert(`読み込み完了: ${newData.length}行`); 
           }
-        } else {
-          alert(`読み込み完了: ${newData.length}行`); 
+          // ★完了時にローディング解除
+          setIsLoading(false);
+        },
+        error: () => {
+          alert("読み込み失敗");
+          setIsLoading(false);
         }
-      },
-      error: () => alert("読み込み失敗")
-    });
+      });
+    }, 100);
   };
 
   const refreshBlocksWithNewData = (data: any[], currentShopId: string) => {
@@ -186,6 +195,10 @@ export default function Home() {
   const loadProject = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    
+    // ★読込時もローディング表示
+    setIsLoading(true);
+    
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
@@ -197,6 +210,9 @@ export default function Home() {
         alert("プロジェクトを復元しました。");
       } catch (err) {
         alert("ファイルの読み込みに失敗しました。");
+      } finally {
+        // ★完了時に解除
+        setIsLoading(false);
       }
     };
     reader.readAsText(file);
@@ -288,7 +304,6 @@ export default function Home() {
   document.getElementById("closeBtn").onclick = function() { document.getElementById("popup").style.display = "none"; };
 </script>` : '';
 
-    // ★期間指定バナー用のスクリプト
     const timerScript = `
 <script>
   (function(){
@@ -300,13 +315,8 @@ export default function Home() {
       var e = banner.getAttribute('data-end');
       var start = s ? new Date(s).getTime() : null;
       var end = e ? new Date(e).getTime() : null;
-      
-      // 開始前なら非表示
       if(start && now < start) { banner.style.display = 'none'; return; }
-      // 終了後なら非表示
       if(end && now > end) { banner.style.display = 'none'; return; }
-      
-      // 期間内なら表示
       banner.style.display = 'block';
     });
   })();
@@ -335,8 +345,6 @@ export default function Home() {
         bodyContent += `<div class="sale-content-inner">`;
       }
 
-      // --- 各ブロックHTML出力 ---
-
       if (block.type === 'top_image') {
         bodyContent += block.imageUrl ? `
         <div class="top-image">
@@ -347,11 +355,7 @@ export default function Home() {
       } else if (block.type === 'spacer') {
         bodyContent += `<div class="spacer" style="height: ${block.height}px;"></div>`;
       } else if (block.type === 'timer_banner') {
-        // ★期間指定バナー出力
         if (block.imageUrl) {
-          // style="display:none" で初期は隠しておき、JSで期間内なら出す（チラつき防止）
-          // または、逆に block にしておいて消すか。楽天の仕様上、スクリプトが遅延する場合を考慮してデフォルト表示or非表示を決める。
-          // ここでは「期間外に見える事故」を防ぐため、デフォルト非表示を推奨したいが、スクリプト無効環境を考慮してデフォルト表示＋JSで消す方式を採用する
           bodyContent += `
           <div class="timer-banner banner-stack" data-start="${block.startTime}" data-end="${block.endTime}" style="margin-bottom:30px;">
             ${block.linkUrl ? `<a href="${block.linkUrl}" target="_blank" style="text-decoration:none; border:none;">` : ''}
@@ -448,7 +452,7 @@ export default function Home() {
     });
     
     bodyContent += `</div>`;
-    bodyContent += timerScript; // 期間指定バナー用のスクリプト追加
+    bodyContent += timerScript;
 
     const fullHTML = `<!DOCTYPE html>
 <html lang="ja">
@@ -627,11 +631,22 @@ ${bodyContent}
 
   return (
     <div className="min-h-screen bg-slate-100 p-8 pb-40 font-sans text-slate-700">
+      {/* ★ローディング画面 */}
+      {isLoading && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm">
+          <div className="bg-white p-6 rounded-xl shadow-2xl flex flex-col items-center">
+            <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mb-4"></div>
+            <p className="text-gray-700 font-bold animate-pulse">データを読み込んでいます...</p>
+            <p className="text-xs text-gray-400 mt-2">※画面を閉じないでください</p>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-6xl mx-auto">
         <header className="mb-8 flex items-center justify-between bg-white p-6 rounded-xl shadow-md border-b-4 border-red-500">
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold text-gray-800">🛍️ 楽天スーパーセール作成ツール</h1>
-            <span className="text-xs bg-red-100 text-red-600 px-2 py-1 rounded-full font-bold">Ver 1.4</span>
+            <span className="text-xs bg-red-100 text-red-600 px-2 py-1 rounded-full font-bold">Ver 1.5</span>
           </div>
           <button 
             onClick={() => signOut()} 
@@ -852,14 +867,14 @@ ${bodyContent}
                               <input type="text" placeholder="吹き出し..." value={p.comment} onChange={(e) => { const newProds = [...block.gridProducts]; newProds[i] = { ...p, comment: e.target.value }; updateBlock(block.id, b => ({ ...b, gridProducts: newProds } as ProductGridBlock)); }} className="border p-1 w-full mb-1 text-[10px] bg-yellow-50 rounded focus:ring-1 focus:ring-yellow-400 outline-none"/>
                               <PriceDisplay price={p.price} refPrice={p.refPrice} isHero={false} />
                               
-                              <div className="flex justify-between mt-2 border-t pt-2">
-                                <button onClick={() => moveProduct(block.id, i, -1)} disabled={i===0} className="text-gray-400 hover:text-blue-600 disabled:opacity-10 transition-colors">◀</button>
+                              <div className="flex justify-between mt-2 border-t pt-1">
+                                <button onClick={() => moveProduct(block.id, i, -1)} disabled={i===0} className="text-gray-500 hover:text-black disabled:opacity-30 transition-colors">◀</button>
                                 <div className="flex gap-2">
                                   {/* ★刷新された変更・削除ボタン */}
                                   <button onClick={() => { const newCode = prompt("新しい商品管理番号", p.code); if(newCode && newCode !== p.code) updateProductInfo(block.id, i, newCode); }} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-2 py-1 rounded text-xs font-bold transition-colors flex items-center gap-1">🖊変更</button>
                                   <button onClick={() => { const newGrid = block.gridProducts.filter((_, idx) => idx !== i); updateBlock(block.id, b => ({ ...b, gridProducts: newGrid } as ProductGridBlock)); }} className="bg-red-100 hover:bg-red-200 text-red-700 px-2 py-1 rounded text-xs font-bold transition-colors flex items-center gap-1">🗑削除</button>
                                 </div>
-                                <button onClick={() => moveProduct(block.id, i, 1)} disabled={i===block.gridProducts.length-1} className="text-gray-400 hover:text-blue-600 disabled:opacity-10 transition-colors">▶</button>
+                                <button onClick={() => moveProduct(block.id, i, 1)} disabled={i===block.gridProducts.length-1} className="text-gray-500 hover:text-black disabled:opacity-30 transition-colors">▶</button>
                               </div>
                             </div>
                           ))}
