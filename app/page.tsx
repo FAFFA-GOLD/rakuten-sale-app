@@ -36,7 +36,10 @@ interface CustomHtmlBlock extends BaseBlock { type: 'custom_html'; content: stri
 interface SpacerBlock extends BaseBlock { type: 'spacer'; height: number; }
 interface TimerBannerBlock extends BaseBlock {
   type: 'timer_banner'; imageUrl: string; linkUrl: string; startTime: string; endTime: string;
+  banners?: TimerBannerItem[]; // 互換性のためオプショナル
 }
+// 複数バナー用型
+type TimerBannerItem = { imageUrl: string; linkUrl: string; startTime: string; endTime: string; };
 
 interface ProductGridBlock extends BaseBlock {
   type: 'product_grid'; 
@@ -44,7 +47,8 @@ interface ProductGridBlock extends BaseBlock {
   bgColor: string;
   heroMode: 'product' | 'banner'; 
   heroProducts: Product[]; 
-  heroBanners: ImageItem[]; // ★修正: 配列に変更（複数バナー対応）
+  heroBanner?: ImageItem; // ★修正: 過去データ互換のためオプショナルで復活
+  heroBanners: ImageItem[]; 
   gridProducts: Product[];
   bottomButtonText?: string;
   bottomButtonLink?: string;
@@ -198,9 +202,7 @@ export default function Home() {
         if (json.blocks) {
           const migratedBlocks = json.blocks.map((b: any) => {
             if (b.type === 'product_grid') {
-              // 目玉商品リスト化
               if (!b.heroProducts) b.heroProducts = b.heroProduct ? [b.heroProduct] : [];
-              // ★目玉バナーリスト化
               if (!b.heroBanners) {
                 b.heroBanners = (b.heroBanner && b.heroBanner.imageUrl) ? [b.heroBanner] : [];
               }
@@ -240,12 +242,12 @@ export default function Home() {
       case 'coupon_list': newBlock = { ...base, type, coupons: [] }; break;
       case 'custom_html': newBlock = { ...base, type, content: "" }; break;
       case 'spacer': newBlock = { ...base, type, height: 50 }; break;
-      case 'timer_banner': newBlock = { ...base, type, imageUrl: "", linkUrl: "", startTime: "", endTime: "" }; break;
+      case 'timer_banner': newBlock = { ...base, type, imageUrl: "", linkUrl: "", startTime: "", endTime: "", banners: [] }; break;
       case 'product_grid': default:
         newBlock = { 
           ...base, type: 'product_grid', title: "カテゴリ名", bgColor: "#ffffff", 
           heroMode: 'product', heroProducts: [], 
-          heroBanner: { imageUrl: "", linkUrl: "" }, heroBanners: [], // ★配列初期化
+          heroBanners: [], // ★修正: 初期化
           gridProducts: [],
           bottomButtonText: "", bottomButtonLink: "", bottomButtonBgColor: "#bf0000", bottomButtonTextColor: "#ffffff" 
         }; break;
@@ -393,6 +395,8 @@ export default function Home() {
         bodyContent += `<div class="sale-content-inner">`;
       }
 
+      // --- 各ブロックHTML出力 ---
+
       if (block.type === 'top_image') {
         bodyContent += block.imageUrl ? `
         <div class="top-image">
@@ -403,14 +407,17 @@ export default function Home() {
       } else if (block.type === 'spacer') {
         bodyContent += `<div class="spacer" style="height: ${block.height}px;"></div>`;
       } else if (block.type === 'timer_banner') {
-        if (block.imageUrl) {
-          bodyContent += `
-          <div class="timer-banner banner-stack" data-start="${block.startTime}" data-end="${block.endTime}" style="margin-bottom:30px;">
-            ${block.linkUrl ? `<a href="${block.linkUrl}" target="_blank" style="text-decoration:none; border:none;">` : ''}
-            <img src="${block.imageUrl}" style="width:100%">
-            ${block.linkUrl ? `</a>` : ''}
-          </div>`;
-        }
+        // 複数バナー対応
+        const tb = block as TimerBannerBlock;
+        const targets = tb.banners && tb.banners.length > 0 ? tb.banners : (tb.imageUrl ? [tb] : []);
+        targets.forEach(b => {
+             bodyContent += `
+             <div class="timer-banner banner-stack" data-start="${b.startTime}" data-end="${b.endTime}" style="margin-bottom:30px;">
+               ${b.linkUrl ? `<a href="${b.linkUrl}" target="_blank" style="text-decoration:none; border:none;">` : ''}
+               <img src="${b.imageUrl}" style="width:100%">
+               ${b.linkUrl ? `</a>` : ''}
+             </div>`;
+        });
       } else if (block.type === 'banner_list') {
         if (block.banners.length > 0) {
           bodyContent += `<div class="banner-stack">
@@ -438,7 +445,7 @@ export default function Home() {
       } else if (block.type === 'product_grid') {
         bodyContent += `<div id="cat-${block.id}" class="cat-title">${block.title}</div>`;
         
-        // ★目玉商品 (複数対応)
+        // ★目玉商品リスト
         if ((block as ProductGridBlock).heroMode === 'product' && (block as ProductGridBlock).heroProducts.length > 0) {
           (block as ProductGridBlock).heroProducts.forEach(product => {
             bodyContent += `<div class="hero-area">
@@ -457,12 +464,12 @@ export default function Home() {
             </div>`;
           });
         }
-        // ★目玉バナー (複数対応)
+        // ★目玉バナーリスト
         else if ((block as ProductGridBlock).heroMode === 'banner') {
-           // 互換性のため heroBanner(単体) があれば heroBanners に混ぜる
            const banners = (block as ProductGridBlock).heroBanners || [];
+           // 互換性: 古い heroBanner がある場合は混ぜる
            if(banners.length === 0 && (block as ProductGridBlock).heroBanner?.imageUrl) {
-               banners.push((block as ProductGridBlock).heroBanner);
+             banners.push((block as ProductGridBlock).heroBanner!);
            }
            banners.forEach(banner => {
              bodyContent += `<div style="margin-bottom: 20px;">
@@ -819,15 +826,15 @@ ${bodyContent}
                          <div className="flex justify-between items-center mb-2">
                             <span className="text-xs font-bold bg-orange-100 text-orange-600 px-2 py-1 rounded">バナー {i+1}</span>
                             <button onClick={() => {
-                               const newBanners = block.banners.filter((_, idx) => idx !== i);
+                               const newBanners = (block.banners || []).filter((_, idx) => idx !== i);
                                updateBlock(block.id, b => ({ ...b, banners: newBanners } as TimerBannerBlock));
                             }} className="text-red-500 text-sm font-bold">× 削除</button>
                          </div>
                          <div className="grid grid-cols-2 gap-4 mb-3">
-                          <div><span className="text-xs font-bold block">開始日時</span><input type="datetime-local" value={b.startTime} onChange={(e) => { const nb=[...block.banners]; nb[i].startTime=e.target.value; updateBlock(block.id, b => ({...b, banners:nb} as TimerBannerBlock)); }} className="border p-2 w-full text-sm rounded"/></div>
-                          <div><span className="text-xs font-bold block">終了日時</span><input type="datetime-local" value={b.endTime} onChange={(e) => { const nb=[...block.banners]; nb[i].endTime=e.target.value; updateBlock(block.id, b => ({...b, banners:nb} as TimerBannerBlock)); }} className="border p-2 w-full text-sm rounded"/></div>
+                          <div><span className="text-xs font-bold block">開始日時</span><input type="datetime-local" value={b.startTime} onChange={(e) => { const nb=[...(block.banners || [])]; nb[i].startTime=e.target.value; updateBlock(block.id, b => ({...b, banners:nb} as TimerBannerBlock)); }} className="border p-2 w-full text-sm rounded"/></div>
+                          <div><span className="text-xs font-bold block">終了日時</span><input type="datetime-local" value={b.endTime} onChange={(e) => { const nb=[...(block.banners || [])]; nb[i].endTime=e.target.value; updateBlock(block.id, b => ({...b, banners:nb} as TimerBannerBlock)); }} className="border p-2 w-full text-sm rounded"/></div>
                          </div>
-                         <ImageLinkInput img={b.imageUrl} link={b.linkUrl} label="画像" onChange={(img, link) => { const nb=[...block.banners]; nb[i].imageUrl=img; nb[i].linkUrl=link; updateBlock(block.id, b => ({...b, banners:nb} as TimerBannerBlock)); }} />
+                         <ImageLinkInput img={b.imageUrl} link={b.linkUrl} label="画像" onChange={(img, link) => { const nb=[...(block.banners || [])]; nb[i].imageUrl=img; nb[i].linkUrl=link; updateBlock(block.id, b => ({...b, banners:nb} as TimerBannerBlock)); }} />
                       </div>
                     ))}
                     <button onClick={() => updateBlock(block.id, b => ({ ...b, banners: [...(b as TimerBannerBlock).banners || [], { imageUrl: "", linkUrl: "", startTime: "", endTime: "" }] } as TimerBannerBlock))} className="w-full py-2 bg-orange-100 text-orange-700 font-bold rounded hover:bg-orange-200">+ 期間バナーを追加</button>
@@ -932,7 +939,6 @@ ${bodyContent}
                                <div key={i} className="mb-2 relative">
                                  <ImageLinkInput img={banner.imageUrl} link={banner.linkUrl} label={`バナー${i+1}`} 
                                    onChange={(img, link) => {
-                                      // 配列を更新
                                       const newBanners = [...arr];
                                       newBanners[i] = { imageUrl: img, linkUrl: link };
                                       updateBlock(block.id, b => ({ ...b, heroBanners: newBanners } as ProductGridBlock));
@@ -947,7 +953,6 @@ ${bodyContent}
                                </div>
                              ))}
                              <button onClick={() => {
-                                // 追加
                                 const current = (block.heroBanners && block.heroBanners.length > 0) ? block.heroBanners : (block.heroBanner?.imageUrl ? [block.heroBanner] : []);
                                 updateBlock(block.id, b => ({ ...b, heroBanners: [...current, { imageUrl: "", linkUrl: "" }] } as ProductGridBlock));
                              }} className="w-full py-2 bg-red-50 border-dashed border-2 border-red-200 text-red-500 font-bold rounded hover:bg-red-100">+ バナー追加</button>
@@ -979,8 +984,9 @@ ${bodyContent}
                               <div className="flex justify-between mt-2 border-t pt-1">
                                 <button onClick={() => moveProduct(block.id, i, -1)} disabled={i===0} className="text-gray-400 hover:text-blue-600 disabled:opacity-10 transition-colors">◀</button>
                                 <div className="flex gap-1">
-                                  <button onClick={() => { const newCode = prompt("新しい商品管理番号", p.code); if(newCode && newCode !== p.code) updateProductInfo(block.id, i, newCode); }} className="text-blue-600 hover:text-blue-800 text-[10px]">変更</button>
-                                  <button onClick={() => { const newGrid = block.gridProducts.filter((_, idx) => idx !== i); updateBlock(block.id, b => ({ ...b, gridProducts: newGrid } as ProductGridBlock)); }} className="text-red-500 hover:text-red-700 text-[10px]">削除</button>
+                                  {/* ★刷新された変更・削除ボタン */}
+                                  <button onClick={() => { const newCode = prompt("新しい商品管理番号", p.code); if(newCode && newCode !== p.code) updateProductInfo(block.id, i, newCode); }} className="bg-blue-100 hover:bg-blue-200 text-blue-700 px-2 py-1 rounded text-xs font-bold transition-colors flex items-center gap-1">🖊変更</button>
+                                  <button onClick={() => { const newGrid = block.gridProducts.filter((_, idx) => idx !== i); updateBlock(block.id, b => ({ ...b, gridProducts: newGrid } as ProductGridBlock)); }} className="bg-red-100 hover:bg-red-200 text-red-700 px-2 py-1 rounded text-xs font-bold transition-colors flex items-center gap-1">🗑削除</button>
                                 </div>
                                 <button onClick={() => moveProduct(block.id, i, 1)} disabled={i===block.gridProducts.length-1} className="text-gray-400 hover:text-black disabled:opacity-30 transition-colors">▶</button>
                               </div>
