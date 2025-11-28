@@ -49,7 +49,7 @@ interface ProductGridBlock extends BaseBlock {
   heroProducts: Product[]; 
   heroBanners: ImageItem[]; 
   gridProducts: Product[];
-  // ★復活: ボタン設定
+  // ボタン設定
   bottomButtonText?: string;
   bottomButtonLink?: string;
   bottomButtonBgColor?: string;
@@ -413,7 +413,6 @@ export default function Home() {
     // ★修正: menuScriptの定義を追加 (Runtime Error解消)
     const menuScript = `<script>function toggleMobileMenu(){var n=document.getElementById('sale-nav-container');n.classList.toggle('mobile-open');}</script>`;
 
-    // ★HTML出力用: JSによる文字サイズ自動調整
     const autoTextSizeScript = `<script>function fitText(){document.querySelectorAll('.grid-btn').forEach(b=>{b.style.whiteSpace='nowrap';b.style.width='100%';b.style.display='block';b.style.overflow='hidden';b.style.textOverflow='ellipsis'; var len=b.innerText.length; var s=12; if(len>10)s=10; else if(len>8)s=11; b.style.fontSize=s+'px';})}; window.addEventListener('load',fitText);window.addEventListener('resize',fitText);</script>`;
 
     // ★HTML構造修正: mobile-menu-btnを追加、sale-nav-containerにID付与
@@ -421,32 +420,27 @@ export default function Home() {
     <div id="mobile-menu-btn" class="mobile-menu-btn" onclick="toggleMobileMenu()">≡</div>
     <div id="sale-nav-container" class="sale-nav-container"><div class="sale-nav-trigger">MENU</div><div class="sale-nav-list"><div style="font-weight:bold;border-bottom:2px solid #bf0000;padding-bottom:5px;margin-bottom:5px">INDEX</div>${categoryBlocks.map(b => `<a href="#cat-${b.id}">${b.title}</a>`).join('')}</div></div>`;
 
-    // ★ブロックごとの動的CSS用
     let dynamicStyles = "";
 
     blocks.forEach(block => {
       const isProduct = block.type === 'product_grid';
       const bgStyle = isProduct ? `background-color: ${(block as ProductGridBlock).bgColor}; color: ${(block as ProductGridBlock).bgColor === '#333333' ? '#fff' : '#333'}` : '';
       
-      // ★スマホコメント表示制御用ID
       const sectionId = `section-${block.id}`;
       if(isProduct) bodyContent += `<div id="${sectionId}" class="cat-section-wrapper" style="${bgStyle}"><div class="sale-content-inner">`;
       else if(block.type !== 'spacer') bodyContent += `<div class="sale-content-inner">`;
 
-      // ★スマホコメントCSS生成
       if (isProduct) {
         const pg = block as ProductGridBlock;
-        const show = pg.mobileCommentShow !== false; // デフォルトON
+        const show = pg.mobileCommentShow !== false;
         const duration = pg.mobileCommentDuration || 3;
         const interval = pg.mobileCommentInterval || 1;
         const totalTime = duration + interval;
         const percent = (duration / totalTime) * 100;
 
         if (!show) {
-           // OFFの場合はスマホで非表示
            dynamicStyles += `@media screen and (max-width:1024px){ #${sectionId} .comment-bubble { display: none !important; } }`;
         } else {
-           // ONの場合は指定時間でアニメーション
            dynamicStyles += `
              @media screen and (max-width:1024px){
                #${sectionId} .comment-bubble {
@@ -505,7 +499,6 @@ export default function Home() {
             const pRef = product.refPrice ? Number(product.refPrice.replace(/,/g, '')) : 0;
             const diff = (pRef > pPrice) ? (pRef - pPrice) : 0;
             
-            // ★修正: OFFバッジ中央・赤文字・斜め, ボタン光沢・コンパクト
             bodyContent += `<div class="hero-area"><div class="hero-img-container"><img src="${product.imageUrl}">${product.comment ? `<div class="comment-bubble">${product.comment}</div>` : ''}</div><div class="hero-info"><div class="hero-name">${cleanName(product.name, filter)}</div><div class="price-box" style="display:flex; flex-direction:column; align-items:center; gap:0px; margin-bottom:10px;"><div style="height:24px; display:flex; align-items:center; width:100%; justify-content:center;">${diff > 0 ? `<span class="price-off-pop-top">\\ ${diff.toLocaleString()}円OFF /</span>` : `<span class="price-off-pop-top" style="visibility:hidden">\\ 0円OFF /</span>`}</div><div style="display:flex; align-items:baseline; justify-content:center; gap:5px; flex-wrap:wrap;">${product.refPrice ? `<span class="price-ref">${Number(product.refPrice).toLocaleString()}円</span><span class="price-arrow">➡</span>` : ''}<span class="price-sale">${Number(product.price).toLocaleString()}円</span></div></div><a href="${product.url}" target="_blank" class="btn-buy" style="text-decoration:none !important; background:#bf0000 !important;"><span style="position:relative; z-index:2;">商品ページへ</span><div class="shine"></div></a></div></div>`;
           });
         } else if (pg.heroMode === 'banner') {
@@ -521,13 +514,13 @@ export default function Home() {
              const pPrice = Number(p.price.replace(/,/g, ''));
              const pRef = p.refPrice ? Number(p.refPrice.replace(/,/g, '')) : 0;
              const diff = (pRef > pPrice) ? (pRef - pPrice) : 0;
-             // ★修正: OFFバッジ中央・赤文字・斜め, ボタン光沢・コンパクト(padding 0)
+             
              return `<a href="${p.url}" target="_blank" class="item-card" style="text-decoration:none; border:1px solid #f0f0f0; display:block; background:#fff; padding:10px; border-radius:6px;"><div class="img-wrap" style="position:relative; margin-bottom:5px;"><img src="${p.imageUrl}" style="width:100%; height:180px; object-fit:contain;">${p.comment ? `<div class="comment-bubble">${p.comment}</div>` : ''}</div><div class="grid-name" style="font-size:13px; height:40px; overflow:hidden; color:#555; line-height:1.4; text-align:left; margin-bottom:0;">${cleanName(p.name, filter)}</div><div style="text-align:center; margin-top:0; height:16px; display:flex; justify-content:center; align-items:center;">${diff > 0 ? `<span class="price-off-pop-grid">\\ ${diff.toLocaleString()}円OFF /</span>` : `<span class="price-off-pop-grid" style="visibility:hidden">\\ 0円OFF /</span>`}</div><div class="price-box" style="display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:baseline; gap:4px; margin-top:-2px;">${p.refPrice ? `<span class="price-ref" style="font-size:10px; color:#999; text-decoration:line-through;">${Number(p.refPrice).toLocaleString()}円</span><span class="price-arrow" style="font-size:10px; color:#999;">➡</span>` : ''}<span class="price-sale" style="font-size:20px; font-weight:bold; color:#bf0000; line-height:1.2;">${Number(p.price).toLocaleString()}円</span></div><div class="grid-btn" style="background:#bf0000 !important; color:#ffffff !important; text-align:center; padding:2px 0 !important; margin-top:4px; border-radius:4px; font-size:11px; font-weight:bold; white-space:nowrap; overflow:hidden; position:relative;"><span style="position:relative; z-index:2;">商品ページへ</span><div class="shine"></div></div></a>`;
           }).join('')}</div>`;
         }
 
         if (block.bottomButtonLink) {
-          // ★修正: ボタンをコンパクトに (padding:12px 60px, font-size:16px)
+          // ★修正: ボタンをコンパクトに (padding削減, font-size 16px)
           bodyContent += `<div style="text-align:center; margin-top:30px;"><a href="${block.bottomButtonLink}" class="section-bottom-btn" target="_blank" style="background-color: ${btnBg}; color: ${btnTxt} !important; display:inline-block; padding:12px 60px; border-radius:50px; font-weight:bold; text-decoration:none !important; font-size:16px;">${block.bottomButtonText || 'もっと見る'}</a></div>`;
         }
       }
@@ -555,7 +548,7 @@ export default function Home() {
     }${dynamicStyles}</style></head><body>${bodyContent}</body></html>`;
 
     navigator.clipboard.writeText(fullHTML);
-    alert("HTMLを作成しました！(クリップボードにコピーしました)");
+    alert("HTMLを作成しました！\n(Ver11.4 ビルド修正版)");
   };
 
   // ---------------------------------------------------------
@@ -569,7 +562,7 @@ export default function Home() {
     
     return (
       <div className={`flex flex-col items-end justify-center w-full`}>
-        {/* 修正: 常にバッジ枠を出力して高さを確保 (visibility制御) + 中央揃え */}
+        {/* 中央・斜め・赤文字のみ */}
         <div className={`text-red-600 text-xs font-bold px-2 py-0.5 mb-0 transform -rotate-2 animate-pulse w-full text-center`} style={{ visibility: diff > 0 ? 'visible' : 'hidden' }}>
            \ {diff > 0 ? diff.toLocaleString() : '0'}円OFF /
         </div>
@@ -619,7 +612,7 @@ export default function Home() {
             <span className="text-2xl">🛍️</span>
             <div>
               <h1 className="text-xl font-bold">楽天スーパーセール作成ツール</h1>
-              <p className="text-xs opacity-90">Ver 1.0 - 2025-11-28</p>
+              <p className="text-xs opacity-90">Ver 11.4 - Build Fixed</p>
             </div>
           </div>
           <button 
@@ -911,7 +904,6 @@ export default function Home() {
                               <input type="text" placeholder="吹き出し..." value={p.comment} onChange={(e) => { const newProds = [...block.gridProducts]; newProds[i] = { ...p, comment: e.target.value }; updateBlock(block.id, b => ({ ...b, gridProducts: newProds } as ProductGridBlock)); }} className="border p-1 w-full mb-1 text-[10px] bg-yellow-50 rounded focus:ring-1 focus:ring-yellow-400 outline-none"/>
                               <PriceDisplay price={p.price} refPrice={p.refPrice} isHero={false} />
                               
-                              {/* プレビュー用ボタン (修正: 赤背景固定 & 光沢アニメ) */}
                               <div className="mt-2 text-center w-full">
                                 <span className="grid-btn-preview inline-block font-bold rounded cursor-default" style={{ 
                                     backgroundColor: '#bf0000', 
