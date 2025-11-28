@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import Papa from "papaparse";
 import { signOut } from "next-auth/react";
 
@@ -30,42 +30,39 @@ type BlockType = 'top_image' | 'banner_list' | 'coupon_list' | 'product_grid' | 
 
 interface BaseBlock { id: string; type: BlockType; }
 interface TopImageBlock extends BaseBlock { type: 'top_image'; imageUrl: string; linkUrl: string; }
-
-// バナーブロック (レイアウト + ヘッダーHTML)
 interface BannerListBlock extends BaseBlock { 
-  type: 'banner_list'; 
-  banners: ImageItem[]; 
-  layout: '1' | '2' | '3' | '4'; 
-  headerHtml: string;
+  type: 'banner_list'; banners: ImageItem[]; layout: '1'|'2'|'3'|'4'; headerHtml: string;
 }
-
 interface CouponListBlock extends BaseBlock { type: 'coupon_list'; coupons: ImageItem[]; }
 interface CustomHtmlBlock extends BaseBlock { type: 'custom_html'; content: string; }
 interface SpacerBlock extends BaseBlock { type: 'spacer'; height: number; }
 interface TimerBannerBlock extends BaseBlock {
-  type: 'timer_banner'; imageUrl: string; linkUrl: string; startTime: string; endTime: string;
-  banners?: TimerBannerItem[];
+  type: 'timer_banner'; imageUrl: string; linkUrl: string; startTime: string; endTime: string; banners?: TimerBannerItem[];
 }
 type TimerBannerItem = { imageUrl: string; linkUrl: string; startTime: string; endTime: string; };
 
 interface ProductGridBlock extends BaseBlock {
   type: 'product_grid'; 
   title: string; 
-  bgColor: string;
+  bgColor: string; 
   heroMode: 'product' | 'banner'; 
   heroProducts: Product[]; 
   heroBanners: ImageItem[]; 
-  heroBanner?: ImageItem; 
   gridProducts: Product[];
+  // ★復活: ボタン設定
   bottomButtonText?: string;
   bottomButtonLink?: string;
   bottomButtonBgColor?: string;
   bottomButtonTextColor?: string;
+  nameFilter?: string;
+  // スマホ用コメント設定
+  mobileCommentShow?: boolean;
+  mobileCommentDuration?: number;
+  mobileCommentInterval?: number;
 }
 
 type Block = TopImageBlock | BannerListBlock | TimerBannerBlock | CouponListBlock | CustomHtmlBlock | SpacerBlock | ProductGridBlock;
 
-// デザイン設定マップ
 const BLOCK_STYLES: Record<BlockType, { label: string; color: string; icon: string; bg: string; border: string }> = {
   top_image:    { label: "トップ画像", color: "text-blue-600", icon: "🖼️", bg: "bg-blue-50", border: "border-blue-200" },
   banner_list:  { label: "バナー一覧", color: "text-orange-600", icon: "📑", bg: "bg-orange-50", border: "border-orange-200" },
@@ -92,6 +89,28 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // ★プレビュー画面用 文字サイズ自動調整
+  useEffect(() => {
+    const adjustFontSize = () => {
+      const buttons = document.querySelectorAll('.grid-btn-preview');
+      buttons.forEach((btn: any) => {
+        // 初期設定: 1行強制、パディング極小
+        btn.style.whiteSpace = 'nowrap'; 
+        btn.style.width = '100%';
+        
+        let size = 13;
+        if(btn.innerText.length > 10) size = 10;
+        else if(btn.innerText.length > 8) size = 11;
+        else if(btn.innerText.length > 6) size = 12;
+        
+        btn.style.fontSize = size + 'px';
+      });
+    };
+    const timer = setTimeout(adjustFontSize, 100);
+    window.addEventListener('resize', adjustFontSize);
+    return () => { clearTimeout(timer); window.removeEventListener('resize', adjustFontSize); };
+  }, [blocks]);
+
   // --- 内部ロジック ---
   const calcTax = (priceStr: string): string => {
     if (!priceStr) return "";
@@ -101,6 +120,16 @@ export default function Home() {
     const integerPart = Math.floor(taxIn);
     const decimalPart = taxIn - integerPart;
     return Math.floor(decimalPart * 10 + 0.00001) >= TAX_THRESHOLD ? (integerPart + 1).toString() : integerPart.toString();
+  };
+
+  const cleanName = (name: string, filterStr?: string) => {
+    if (!filterStr) return name;
+    let cleaned = name;
+    const filters = filterStr.split(',').map(s => s.trim()).filter(s => s);
+    filters.forEach(word => {
+      cleaned = cleaned.split(word).join('');
+    });
+    return cleaned;
   };
 
   const findProductData = (code: string, data: any[], currentShopId: string): Product | null => {
@@ -204,6 +233,28 @@ export default function Home() {
     document.body.removeChild(a);
   };
 
+  const exportRegisteredProducts = () => {
+    if (blocks.length === 0) { alert("出力する商品がありません"); return; }
+    const rows: any[] = [];
+    rows.push(["ブロック名", "タイプ", "商品管理番号", "商品名", "価格(税込)", "商品URL"]);
+    blocks.forEach(b => {
+      if (b.type === 'product_grid') {
+        const pg = b as ProductGridBlock;
+        pg.heroProducts.forEach(p => rows.push([pg.title, "目玉", p.code, p.name, p.price, p.url]));
+        pg.gridProducts.forEach(p => rows.push([pg.title, "通常", p.code, p.name, p.price, p.url]));
+      }
+    });
+    const csvContent = Papa.unparse(rows);
+    const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `registered_products_${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
   const loadProject = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -220,9 +271,16 @@ export default function Home() {
           const migratedBlocks = json.blocks.map((b: any) => {
             if (b.type === 'product_grid') {
               if (!b.heroProducts) b.heroProducts = b.heroProduct ? [b.heroProduct] : [];
-              if (!b.heroBanners) {
-                b.heroBanners = (b.heroBanner && b.heroBanner.imageUrl) ? [b.heroBanner] : [];
-              }
+              if (!b.heroBanners) b.heroBanners = (b.heroBanner && b.heroBanner.imageUrl) ? [b.heroBanner] : [];
+              if (!b.nameFilter) b.nameFilter = "";
+              // 初期値設定
+              if (b.mobileCommentShow === undefined) b.mobileCommentShow = true;
+              if (b.mobileCommentDuration === undefined) b.mobileCommentDuration = 3;
+              if (b.mobileCommentInterval === undefined) b.mobileCommentInterval = 1;
+              // ボタン設定初期化
+              if (!b.bottomButtonText) b.bottomButtonText = "もっと見る";
+              if (!b.bottomButtonBgColor) b.bottomButtonBgColor = "#bf0000";
+              if (!b.bottomButtonTextColor) b.bottomButtonTextColor = "#ffffff";
             }
             if (b.type === 'timer_banner') {
               if (!b.banners) {
@@ -264,8 +322,17 @@ export default function Home() {
         newBlock = { 
           ...base, type: 'product_grid', title: "カテゴリ名", bgColor: "#ffffff", 
           heroMode: 'product', heroProducts: [], heroBanners: [], 
-          gridProducts: [],
-          bottomButtonText: "", bottomButtonLink: "", bottomButtonBgColor: "#bf0000", bottomButtonTextColor: "#ffffff" 
+          gridProducts: [], 
+          // ボタン設定初期値
+          bottomButtonText: "もっと見る",
+          bottomButtonLink: "",
+          bottomButtonBgColor: "#bf0000",
+          bottomButtonTextColor: "#ffffff",
+          nameFilter: "",
+          // スマホコメント表示設定
+          mobileCommentShow: true,
+          mobileCommentDuration: 3,
+          mobileCommentInterval: 1
         }; break;
     }
     setBlocks([...blocks, newBlock]);
@@ -281,7 +348,6 @@ export default function Home() {
   };
   const updateBlock = (id: string, updater: (b: Block) => Block) => setBlocks(blocks.map(b => b.id === id ? updater(b) : b));
 
-  // 目玉商品操作
   const addHeroProduct = (blockId: string, code: string) => {
     const p = searchCsvProduct(code);
     if (!p) return;
@@ -316,7 +382,6 @@ export default function Home() {
     });
   };
   
-  // 商品移動・更新 (通常グリッド)
   const moveProduct = (blockId: string, index: number, direction: number) => {
     updateBlock(blockId, (block) => {
       const b = block as ProductGridBlock;
@@ -344,14 +409,60 @@ export default function Home() {
     
     const popupScript = popupImage ? `<style>.overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);display:none;justify-content:center;align-items:center;z-index:10000}.popup-banner{background:transparent;padding:0;text-align:center;position:relative}.popup-banner img{width:900px;max-width:95%;display:block;margin:0 auto}.popup-banner .close-btn{display:inline-block;margin-top:15px;padding:10px 30px;font-size:24px;font-weight:bold;color:#fff;background:#333;border-radius:8px;cursor:pointer;box-shadow:0 0 6px rgba(0,0,0,0.4);transition:0.2s ease}.popup-banner .close-btn:hover{background:#555}</style><div class="overlay" id="popup"><div class="popup-banner">${popupLink?`<a href="${popupLink}" target="_blank">`:''}<img src="${popupImage}" border="0">${popupLink?`</a>`:''}<div class="close-btn" id="closeBtn">× 閉じる</div></div></div><script>window.onload=function(){let shownCount=localStorage.getItem("popupShown_${shopId}");shownCount=shownCount?parseInt(shownCount,10):0;if(shownCount<3){document.getElementById("popup").style.display="flex";localStorage.setItem("popupShown_${shopId}",shownCount+1);}};document.getElementById("closeBtn").onclick=function(){document.getElementById("popup").style.display="none"};</script>` : '';
     const timerScript = `<script>(function(){var now=new Date().getTime();var banners=document.querySelectorAll('.timer-banner');if(banners.length===0)return;banners.forEach(function(banner){var s=banner.getAttribute('data-start');var e=banner.getAttribute('data-end');var start=s?new Date(s).getTime():null;var end=e?new Date(e).getTime():null;if(start&&now<start){banner.style.display='none';return}if(end&&now>end){banner.style.display='none';return}banner.style.display='block'})})();</script>`;
+    
+    // ★修正: menuScriptの定義を追加 (Runtime Error解消)
+    const menuScript = `<script>function toggleMobileMenu(){var n=document.getElementById('sale-nav-container');n.classList.toggle('mobile-open');}</script>`;
 
-    let bodyContent = `<div id="rakuten-sale-app">${popupScript}<div class="sale-nav-container"><div class="sale-nav-trigger">MENU</div><div class="sale-nav-list"><div style="font-weight:bold;border-bottom:2px solid #bf0000;padding-bottom:5px;margin-bottom:5px">INDEX</div>${categoryBlocks.map(b => `<a href="#cat-${b.id}">${b.title}</a>`).join('')}</div></div>`;
+    // ★HTML出力用: JSによる文字サイズ自動調整
+    const autoTextSizeScript = `<script>function fitText(){document.querySelectorAll('.grid-btn').forEach(b=>{b.style.whiteSpace='nowrap';b.style.width='100%';b.style.display='block';b.style.overflow='hidden';b.style.textOverflow='ellipsis'; var len=b.innerText.length; var s=12; if(len>10)s=10; else if(len>8)s=11; b.style.fontSize=s+'px';})}; window.addEventListener('load',fitText);window.addEventListener('resize',fitText);</script>`;
+
+    // ★HTML構造修正: mobile-menu-btnを追加、sale-nav-containerにID付与
+    let bodyContent = `<div id="rakuten-sale-app">${popupScript}
+    <div id="mobile-menu-btn" class="mobile-menu-btn" onclick="toggleMobileMenu()">≡</div>
+    <div id="sale-nav-container" class="sale-nav-container"><div class="sale-nav-trigger">MENU</div><div class="sale-nav-list"><div style="font-weight:bold;border-bottom:2px solid #bf0000;padding-bottom:5px;margin-bottom:5px">INDEX</div>${categoryBlocks.map(b => `<a href="#cat-${b.id}">${b.title}</a>`).join('')}</div></div>`;
+
+    // ★ブロックごとの動的CSS用
+    let dynamicStyles = "";
 
     blocks.forEach(block => {
       const isProduct = block.type === 'product_grid';
       const bgStyle = isProduct ? `background-color: ${(block as ProductGridBlock).bgColor}; color: ${(block as ProductGridBlock).bgColor === '#333333' ? '#fff' : '#333'}` : '';
-      if(isProduct) bodyContent += `<div class="cat-section-wrapper" style="${bgStyle}"><div class="sale-content-inner">`;
+      
+      // ★スマホコメント表示制御用ID
+      const sectionId = `section-${block.id}`;
+      if(isProduct) bodyContent += `<div id="${sectionId}" class="cat-section-wrapper" style="${bgStyle}"><div class="sale-content-inner">`;
       else if(block.type !== 'spacer') bodyContent += `<div class="sale-content-inner">`;
+
+      // ★スマホコメントCSS生成
+      if (isProduct) {
+        const pg = block as ProductGridBlock;
+        const show = pg.mobileCommentShow !== false; // デフォルトON
+        const duration = pg.mobileCommentDuration || 3;
+        const interval = pg.mobileCommentInterval || 1;
+        const totalTime = duration + interval;
+        const percent = (duration / totalTime) * 100;
+
+        if (!show) {
+           // OFFの場合はスマホで非表示
+           dynamicStyles += `@media screen and (max-width:1024px){ #${sectionId} .comment-bubble { display: none !important; } }`;
+        } else {
+           // ONの場合は指定時間でアニメーション
+           dynamicStyles += `
+             @media screen and (max-width:1024px){
+               #${sectionId} .comment-bubble {
+                 animation: bubbleLoop-${block.id} ${totalTime}s infinite !important;
+                 opacity: 0; visibility: hidden;
+               }
+               @keyframes bubbleLoop-${block.id} {
+                 0% { opacity: 1; visibility: visible; transform: translateX(-50%) translateY(-5px); }
+                 ${percent}% { opacity: 1; visibility: visible; transform: translateX(-50%) translateY(-5px); }
+                 ${percent + 1}% { opacity: 0; visibility: hidden; transform: translateX(-50%) translateY(0); }
+                 100% { opacity: 0; visibility: hidden; transform: translateX(-50%) translateY(0); }
+               }
+             }
+           `;
+        }
+      }
 
       if (block.type === 'top_image') bodyContent += block.imageUrl ? `<div class="top-image">${block.linkUrl ? `<a href="${block.linkUrl}" target="_blank" style="text-decoration:none; border:none;">` : ''}<img src="${block.imageUrl}" alt="Top">${block.linkUrl ? `</a>` : ''}</div>` : '';
       else if (block.type === 'spacer') bodyContent += `<div class="spacer" style="height: ${block.height}px;"></div>`;
@@ -365,12 +476,10 @@ export default function Home() {
         const bl = block as BannerListBlock;
         if (bl.banners.length > 0) {
            if (bl.headerHtml) bodyContent += `<div class="banner-header-html" style="margin-bottom:15px;">${bl.headerHtml}</div>`;
-           
            const layout = bl.layout || '1';
            const cols = Number(layout);
            const gridClass = cols > 1 ? `banner-grid-${cols}` : 'banner-stack';
            const gridStyle = cols > 1 ? `display:grid; grid-template-columns:repeat(${cols},1fr); gap:15px; margin-bottom:30px;` : 'display:flex; flex-direction:column; gap:15px; margin-bottom:30px;';
-           
            bodyContent += `<div class="${gridClass}" style="${gridStyle}">`;
            bl.banners.forEach(b => {
              bodyContent += `<div class="banner-item">${b.linkUrl ? `<a href="${b.linkUrl}" target="_blank" style="text-decoration:none; border:none;">` : ''}<img src="${b.imageUrl}" style="width:100%">${b.linkUrl ? `</a>` : ''}</div>`;
@@ -383,54 +492,94 @@ export default function Home() {
         }
       } else if (block.type === 'custom_html') bodyContent += `<div class="custom-html">${block.content}</div>`;
       else if (block.type === 'product_grid') {
+        const pg = block as ProductGridBlock;
+        const filter = pg.nameFilter || "";
+        const btnBg = pg.bottomButtonBgColor || '#bf0000';
+        const btnTxt = pg.bottomButtonTextColor || '#ffffff';
+        
         bodyContent += `<div id="cat-${block.id}" class="cat-title">${block.title}</div>`;
         
-        if ((block as ProductGridBlock).heroMode === 'product' && (block as ProductGridBlock).heroProducts.length > 0) {
-          (block as ProductGridBlock).heroProducts.forEach(product => {
-            bodyContent += `<div class="hero-area"><div class="hero-img-container"><img src="${product.imageUrl}">${product.comment ? `<div class="comment-bubble">${product.comment}</div>` : ''}</div><div class="hero-info"><div class="hero-name">${product.name}</div><div class="price-box">${product.refPrice ? `<span class="price-ref">${Number(product.refPrice).toLocaleString()}円</span><span class="price-arrow">➡</span>` : ''}<span class="price-sale">${Number(product.price).toLocaleString()}円</span></div><a href="${product.url}" target="_blank" class="btn-buy" style="text-decoration:none !important;">商品ページへ</a></div></div>`;
+        if (pg.heroMode === 'product' && pg.heroProducts.length > 0) {
+          pg.heroProducts.forEach(product => {
+            const pPrice = Number(product.price.replace(/,/g, ''));
+            const pRef = product.refPrice ? Number(product.refPrice.replace(/,/g, '')) : 0;
+            const diff = (pRef > pPrice) ? (pRef - pPrice) : 0;
+            
+            // ★修正: OFFバッジ中央・赤文字・斜め, ボタン光沢・コンパクト
+            bodyContent += `<div class="hero-area"><div class="hero-img-container"><img src="${product.imageUrl}">${product.comment ? `<div class="comment-bubble">${product.comment}</div>` : ''}</div><div class="hero-info"><div class="hero-name">${cleanName(product.name, filter)}</div><div class="price-box" style="display:flex; flex-direction:column; align-items:center; gap:0px; margin-bottom:10px;"><div style="height:24px; display:flex; align-items:center; width:100%; justify-content:center;">${diff > 0 ? `<span class="price-off-pop-top">\\ ${diff.toLocaleString()}円OFF /</span>` : `<span class="price-off-pop-top" style="visibility:hidden">\\ 0円OFF /</span>`}</div><div style="display:flex; align-items:baseline; justify-content:center; gap:5px; flex-wrap:wrap;">${product.refPrice ? `<span class="price-ref">${Number(product.refPrice).toLocaleString()}円</span><span class="price-arrow">➡</span>` : ''}<span class="price-sale">${Number(product.price).toLocaleString()}円</span></div></div><a href="${product.url}" target="_blank" class="btn-buy" style="text-decoration:none !important; background:#bf0000 !important;"><span style="position:relative; z-index:2;">商品ページへ</span><div class="shine"></div></a></div></div>`;
           });
-        }
-        else if ((block as ProductGridBlock).heroMode === 'banner') {
-           const banners = (block as ProductGridBlock).heroBanners || [];
-           if(banners.length === 0 && (block as ProductGridBlock).heroBanner?.imageUrl) {
-             banners.push((block as ProductGridBlock).heroBanner!);
-           }
+        } else if (pg.heroMode === 'banner') {
+           const banners = pg.heroBanners || [];
+           if(banners.length === 0 && pg.heroBanner?.imageUrl) banners.push(pg.heroBanner!);
            banners.forEach(banner => {
              bodyContent += `<div style="margin-bottom: 20px;">${banner.linkUrl ? `<a href="${banner.linkUrl}" target="_blank" style="text-decoration:none; border:none;">` : ''}<img src="${banner.imageUrl}" class="hero-banner-img" alt="Featured" style="width:100%">${banner.linkUrl ? `</a>` : ''}</div>`;
            });
         }
 
         if (block.gridProducts.length > 0) {
-          bodyContent += `<div class="grid-area">${block.gridProducts.map(p => `<div class="item-card"><a href="${p.url}" target="_blank" style="text-decoration:none; border:none;"><div class="img-wrap"><img src="${p.imageUrl}">${p.comment ? `<div class="comment-bubble">${p.comment}</div>` : ''}</div><div class="grid-name">${p.name}</div><div class="price-box">${p.refPrice ? `<span class="price-ref">${Number(p.refPrice).toLocaleString()}円</span><span class="price-arrow">➡</span>` : ''}<span class="price-sale">${Number(p.price).toLocaleString()}円</span></div><span class="grid-btn">商品ページへ</span></a></div>`).join('')}</div>`;
+          bodyContent += `<div class="grid-area">${block.gridProducts.map(p => {
+             const pPrice = Number(p.price.replace(/,/g, ''));
+             const pRef = p.refPrice ? Number(p.refPrice.replace(/,/g, '')) : 0;
+             const diff = (pRef > pPrice) ? (pRef - pPrice) : 0;
+             // ★修正: OFFバッジ中央・赤文字・斜め, ボタン光沢・コンパクト(padding 0)
+             return `<a href="${p.url}" target="_blank" class="item-card" style="text-decoration:none; border:1px solid #f0f0f0; display:block; background:#fff; padding:10px; border-radius:6px;"><div class="img-wrap" style="position:relative; margin-bottom:5px;"><img src="${p.imageUrl}" style="width:100%; height:180px; object-fit:contain;">${p.comment ? `<div class="comment-bubble">${p.comment}</div>` : ''}</div><div class="grid-name" style="font-size:13px; height:40px; overflow:hidden; color:#555; line-height:1.4; text-align:left; margin-bottom:0;">${cleanName(p.name, filter)}</div><div style="text-align:center; margin-top:0; height:16px; display:flex; justify-content:center; align-items:center;">${diff > 0 ? `<span class="price-off-pop-grid">\\ ${diff.toLocaleString()}円OFF /</span>` : `<span class="price-off-pop-grid" style="visibility:hidden">\\ 0円OFF /</span>`}</div><div class="price-box" style="display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:baseline; gap:4px; margin-top:-2px;">${p.refPrice ? `<span class="price-ref" style="font-size:10px; color:#999; text-decoration:line-through;">${Number(p.refPrice).toLocaleString()}円</span><span class="price-arrow" style="font-size:10px; color:#999;">➡</span>` : ''}<span class="price-sale" style="font-size:20px; font-weight:bold; color:#bf0000; line-height:1.2;">${Number(p.price).toLocaleString()}円</span></div><div class="grid-btn" style="background:#bf0000 !important; color:#ffffff !important; text-align:center; padding:2px 0 !important; margin-top:4px; border-radius:4px; font-size:11px; font-weight:bold; white-space:nowrap; overflow:hidden; position:relative;"><span style="position:relative; z-index:2;">商品ページへ</span><div class="shine"></div></div></a>`;
+          }).join('')}</div>`;
         }
 
         if (block.bottomButtonLink) {
-          const btnBg = block.bottomButtonBgColor || '#bf0000';
-          const btnText = block.bottomButtonTextColor || '#ffffff';
-          bodyContent += `<div style="text-align:center; margin-top:30px;"><a href="${block.bottomButtonLink}" class="section-bottom-btn" target="_blank" style="background-color: ${btnBg}; color: ${btnText} !important;">${block.bottomButtonText || 'もっと見る'}</a></div>`;
+          // ★修正: ボタンをコンパクトに (padding:12px 60px, font-size:16px)
+          bodyContent += `<div style="text-align:center; margin-top:30px;"><a href="${block.bottomButtonLink}" class="section-bottom-btn" target="_blank" style="background-color: ${btnBg}; color: ${btnTxt} !important; display:inline-block; padding:12px 60px; border-radius:50px; font-weight:bold; text-decoration:none !important; font-size:16px;">${block.bottomButtonText || 'もっと見る'}</a></div>`;
         }
       }
 
       if(isProduct || block.type !== 'spacer') { bodyContent += `</div>`; if(isProduct) bodyContent += `</div>`; }
     });
-    bodyContent += `</div>${timerScript}`;
+    bodyContent += `</div>${timerScript}${autoTextSizeScript}${menuScript}`;
 
-    const fullHTML = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>楽天スーパーセール特設ページ</title><style>body{margin:0;padding:0;font-family:"Hiragino Kaku Gothic ProN","Meiryo",sans-serif;line-height:1.6;color:#333}*{box-sizing:border-box}img{max-width:100%;height:auto;display:block;margin:0 auto;border:none!important;outline:none!important}#rakuten-sale-app a{text-decoration:none!important;color:inherit!important;transition:opacity 0.3s;display:block;border:none!important;outline:none!important;box-shadow:none!important}#rakuten-sale-app a:hover{opacity:0.9;text-decoration:none!important;border:none!important}.sale-content-inner{max-width:900px;margin:0 auto;padding:0 10px;position:relative}.sale-nav-container{position:fixed;left:0;top:20%;z-index:9999;transform:translateX(-100%);transition:transform 0.3s;display:flex}.sale-nav-container:hover{transform:translateX(0)}.sale-nav-trigger{background:#333;color:#fff;width:40px;padding:15px 0;display:flex;align-items:center;justify-content:center;font-weight:bold;cursor:pointer;border-radius:0 8px 8px 0;writing-mode:vertical-rl;letter-spacing:2px;box-shadow:2px 2px 5px rgba(0,0,0,0.2);position:absolute;left:100%;top:0}.sale-nav-list{background:rgba(255,255,255,0.95);border:1px solid #ddd;border-left:none;box-shadow:2px 2px 10px rgba(0,0,0,0.1);padding:15px;min-width:200px;display:flex;flex-direction:column;gap:10px;border-radius:0 0 8px 0}.sale-nav-list a{display:block;font-size:14px;color:#333!important;padding:8px;border-bottom:1px dashed #eee!important}.sale-nav-list a:hover{color:#bf0000!important;padding-left:12px}.top-image{margin-bottom:20px;width:100%}.banner-stack{display:flex;flex-direction:column;gap:15px;margin-bottom:30px}.coupon-grid{display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:30px}.cat-section-wrapper{width:100%;padding:40px 0;margin-bottom:0}.cat-title{text-align:center;font-size:26px;font-weight:bold;margin:0 0 40px;padding:10px 0;letter-spacing:3px;position:relative;color:inherit;animation:titlePulse 3s ease-in-out infinite}.cat-title::after{content:'';display:block;width:50px;height:3px;background:#bf0000;margin:15px auto 0;transition:width 0.3s;animation:lineSway 3s ease-in-out infinite}.hero-area{display:flex;border:1px solid #eee;margin-bottom:30px;background:#fff;box-shadow:0 4px 12px rgba(0,0,0,0.08);border-radius:8px;color:#333;position:relative;overflow:visible!important;z-index:10}.hero-area:hover{z-index:50}.hero-img-container{width:50%;position:relative}.hero-img-container img{width:100%;height:100%;object-fit:cover;border-radius:8px 0 0 8px}.hero-info{width:50%;padding:30px;display:flex;flex-direction:column;justify-content:center;text-align:center}.hero-name{font-size:18px;font-weight:bold;margin-bottom:15px}.price-box{margin:15px 0;display:flex;justify-content:center;align-items:baseline;gap:10px;flex-wrap:wrap}.price-ref{color:#999;text-decoration:line-through;font-size:14px}.price-arrow{color:#ccc;font-size:12px;margin:0 5px;display:inline-block}.price-sale{color:#bf0000;font-weight:bold;font-family:Arial}.hero-info .price-sale{font-size:36px}.btn-buy{background:linear-gradient(to bottom,#d90000,#bf0000);color:white!important;padding:12px 40px;border-radius:30px;font-weight:bold;display:inline-block;margin-top:15px;text-decoration:none!important}.grid-area{display:grid;grid-template-columns:repeat(4,1fr);gap:15px;color:#333}.item-card{border:1px solid #f0f0f0;padding:10px;text-align:center;background:#fff;display:flex;flex-direction:column;justify-content:space-between;height:100%;border-radius:6px;transition:all 0.3s;position:relative;top:0;overflow:visible!important;z-index:10}.item-card:hover{top:-5px;border-color:#ffd1d1;box-shadow:0 10px 20px rgba(0,0,0,0.1);z-index:50}.img-wrap{position:relative;width:100%;margin-bottom:8px}.img-wrap img{width:100%;height:180px;object-fit:contain}.grid-name{font-size:13px;height:90px;overflow:hidden;line-height:1.4;margin-bottom:5px;text-align:left;color:#555;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical}.item-card .price-box{justify-content:flex-end;padding-right:5px;margin:5px 0 0}.item-card .price-sale{font-size:18px}.grid-btn{display:block;background:#bf0000;color:#fff!important;text-align:center;padding:10px 0;margin-top:8px;border-radius:4px;font-weight:bold;font-size:15px;transition:opacity 0.2s;text-decoration:none!important}.item-card:hover .grid-btn{opacity:0.8}.section-bottom-btn{display:inline-block;padding:20px 80px;border-radius:50px;font-weight:bold;text-decoration:none!important;box-shadow:0 5px 15px rgba(0,0,0,0.2);transition:transform 0.2s;font-size:24px}.section-bottom-btn:hover{transform:translateY(-2px);opacity:0.9}.comment-bubble{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);margin-bottom:10px;background:#333;color:#fff;padding:8px 12px;border-radius:6px;font-size:12px;font-weight:bold;width:180px;text-align:center;pointer-events:none;z-index:9999;box-shadow:0 4px 10px rgba(0,0,0,0.2);opacity:0;visibility:hidden;transition:all 0.3s}.comment-bubble::after{content:'';position:absolute;top:100%;left:50%;margin-left:-6px;border-width:6px;border-style:solid;border-color:#333 transparent transparent transparent}.item-card:hover .comment-bubble,.hero-img-container:hover .comment-bubble{opacity:1;visibility:visible;transform:translateX(-50%) translateY(-5px)}.spacer{width:100%}@keyframes bubbleLoop{0%,75%{opacity:1;visibility:visible}76%,100%{opacity:0;visibility:hidden}}@keyframes titlePulse{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}@keyframes lineSway{0%,100%{width:50px}50%{width:100px}}@media screen and (max-width:1024px){.hero-area{flex-direction:column}.hero-img-container{width:100%}.hero-img-container img{border-radius:8px 8px 0 0}.hero-info{width:100%}.grid-area{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important}.grid-name{font-size:12px;height:84px}.sale-nav-trigger{width:30px;font-size:12px;padding:10px 0}.banner-grid-2,.banner-grid-3,.banner-grid-4{grid-template-columns:repeat(2,1fr)!important}.comment-bubble{top:auto!important;bottom:0!important;left:0!important;width:100%!important;margin:0!important;border-radius:0 0 4px 4px!important;background:rgba(0,0,0,0.75)!important;transform:none!important;animation:bubbleLoop 4s infinite!important}.comment-bubble::after{display:block!important;top:auto!important;bottom:100%!important;left:50%!important;border-color:transparent transparent rgba(0,0,0,0.75) transparent!important}}</style></head><body>${bodyContent}</body></html>`;
+    // ★CSS修正: 既存CSS + スマホボタン改善 + MENU改善
+    const fullHTML = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>楽天スーパーセール特設ページ</title><style>body{margin:0;padding:0;font-family:"Hiragino Kaku Gothic ProN","Meiryo",sans-serif;line-height:1.6;color:#333}*{box-sizing:border-box}img{max-width:100%;height:auto;display:block;margin:0 auto;border:none!important;outline:none!important}#rakuten-sale-app a{text-decoration:none!important;color:inherit!important;transition:opacity 0.3s;display:block;border:none!important;outline:none!important;box-shadow:none!important}#rakuten-sale-app a:hover{opacity:0.9;text-decoration:none!important;border:none!important}.sale-content-inner{max-width:900px;margin:0 auto;padding:0 10px;position:relative}.sale-nav-container{position:fixed;left:0;top:20%;z-index:9999;transform:translateX(-100%);transition:transform 0.3s;display:flex}.sale-nav-container:hover{transform:translateX(0)}
+    /* PC用MENUボタン改善: 幅広・文字切れ防止 */
+    .sale-nav-trigger{background:#333;color:#fff;width:60px;height:auto;padding:15px 5px;display:flex;align-items:center;justify-content:center;font-weight:bold;cursor:pointer;border-radius:0 8px 8px 0;writing-mode:vertical-rl;letter-spacing:2px;box-shadow:2px 2px 5px rgba(0,0,0,0.2);position:absolute;left:100%;top:0;white-space:nowrap;}
+    .sale-nav-list{background:rgba(255,255,255,0.95);border:1px solid #ddd;border-left:none;box-shadow:2px 2px 10px rgba(0,0,0,0.1);padding:15px;min-width:200px;display:flex;flex-direction:column;gap:10px;border-radius:0 0 8px 0}.sale-nav-list a{display:block;font-size:14px;color:#333!important;padding:8px;border-bottom:1px dashed #eee!important}.sale-nav-list a:hover{color:#bf0000!important;padding-left:12px}.top-image{margin-bottom:20px;width:100%}.banner-stack{display:flex;flex-direction:column;gap:15px;margin-bottom:30px}.coupon-grid{display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:30px}.cat-section-wrapper{width:100%;padding:40px 0;margin-bottom:0}.cat-title{text-align:center;font-size:26px;font-weight:bold;margin:0 0 40px;padding:10px 0;letter-spacing:3px;position:relative;color:inherit;animation:titlePulse 3s ease-in-out infinite}.cat-title::after{content:'';display:block;width:50px;height:3px;background:#bf0000;margin:15px auto 0;transition:width 0.3s;animation:lineSway 3s ease-in-out infinite}.hero-area{display:flex;border:1px solid #eee;margin-bottom:30px;background:#fff;box-shadow:0 4px 12px rgba(0,0,0,0.08);border-radius:8px;color:#333;position:relative;overflow:visible!important;z-index:10}.hero-area:hover{z-index:50}.hero-img-container{width:50%;position:relative}.hero-img-container img{width:100%;height:100%;object-fit:cover;border-radius:8px 0 0 8px}.hero-info{width:50%;padding:30px;display:flex;flex-direction:column;justify-content:center;text-align:center}.hero-name{font-size:18px;font-weight:bold;margin-bottom:15px}.price-box{margin:15px 0;display:flex;justify-content:center;align-items:baseline;gap:10px;flex-wrap:wrap;align-content:center}.price-ref{color:#999;text-decoration:line-through;font-size:14px}.price-arrow{color:#ccc;font-size:12px;margin:0 5px;display:inline-block}.price-sale{color:#bf0000;font-weight:bold;font-family:Arial}.hero-info .price-sale{font-size:36px}.btn-buy{background:linear-gradient(to bottom,#d90000,#bf0000);color:white!important;padding:12px 40px;border-radius:30px;font-weight:bold;display:inline-block;margin-top:15px;text-decoration:none!important;position:relative;overflow:hidden}.grid-area{display:grid;grid-template-columns:repeat(4,1fr);gap:15px;color:#333}.item-card{border:1px solid #f0f0f0;padding:10px;text-align:center;background:#fff;display:flex;flex-direction:column;justify-content:space-between;height:100%;border-radius:6px;transition:all 0.3s;position:relative;top:0;overflow:visible!important;z-index:10}.item-card:hover{top:-5px;border-color:#ffd1d1;box-shadow:0 10px 20px rgba(0,0,0,0.1);z-index:50}.img-wrap{position:relative;width:100%;margin-bottom:8px}.img-wrap img{width:100%;height:180px;object-fit:contain}.grid-name{font-size:13px;height:40px;line-height:1.5;overflow:hidden;margin-bottom:5px;text-align:left;color:#555;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}.item-card .price-box{justify-content:flex-end;padding-right:5px;margin:5px 0 0}.item-card .price-sale{font-size:18px}.section-bottom-btn{display:inline-block;padding:12px 60px;border-radius:50px;font-weight:bold;text-decoration:none!important;box-shadow:0 5px 15px rgba(0,0,0,0.2);transition:transform 0.2s;font-size:16px}.section-bottom-btn:hover{transform:translateY(-2px);opacity:0.9}.comment-bubble{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);margin-bottom:10px;background:#333;color:#fff;padding:8px 12px;border-radius:6px;font-size:12px;font-weight:bold;width:180px;text-align:center;pointer-events:none;z-index:9999;box-shadow:0 4px 10px rgba(0,0,0,0.2);opacity:0;visibility:hidden;transition:all 0.3s}.comment-bubble::after{content:'';position:absolute;top:100%;left:50%;margin-left:-6px;border-width:6px;border-style:solid;border-color:#333 transparent transparent transparent}.item-card:hover .comment-bubble,.hero-img-container:hover .comment-bubble{opacity:1;visibility:visible;transform:translateX(-50%) translateY(-5px)}.spacer{width:100%} /* ★赤文字のみバッジ(中央) */ .price-off-pop-top, .price-off-pop-grid { display:inline-block; color:#bf0000; font-weight:bold; font-size:12px; animation:pop 1s infinite alternate; transform:rotate(-2deg); width:100%; text-align:center; } .price-off-pop-top{ font-size:16px; margin-bottom:8px; } .price-off-pop-grid{ font-size:11px; margin:0 0 2px 0; } /* ★ボタン光沢 */ .shine { position:absolute; top:0; left:-100%; width:50%; height:100%; background:linear-gradient(to right,transparent,rgba(255,255,255,0.5),transparent); transform:skewX(-25deg); animation:shine 3s infinite; z-index:1; } @keyframes shine{0%{left:-100%;opacity:0}20%{opacity:0.5}40%{left:200%;opacity:0}100%{left:200%;opacity:0}} @keyframes bubbleLoop{0%,75%{opacity:1;visibility:visible}76%,100%{opacity:0;visibility:hidden}}@keyframes titlePulse{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}@keyframes lineSway{0%,100%{width:50px}50%{width:100px}}@keyframes pop{0%{transform:rotate(-2deg) scale(1)}100%{transform:rotate(-2deg) scale(1.1)}}
+    /* PCではスマホ用ボタン非表示 */
+    .mobile-menu-btn { display: none; }
+    
+    @media screen and (max-width:1024px){
+      .hero-area{flex-direction:column}.hero-img-container{width:100%}.hero-img-container img{border-radius:8px 8px 0 0}.hero-info{width:100%}.grid-area{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important}.grid-name{font-size:12px;height:40px}.banner-grid-2,.banner-grid-3,.banner-grid-4{grid-template-columns:repeat(2,1fr)!important}.price-off{display:block;font-size:12px;text-align:right;margin-top:4px}.comment-bubble{top:auto!important;bottom:0!important;left:0!important;width:100%!important;margin:0!important;border-radius:0 0 4px 4px!important;background:rgba(0,0,0,0.75)!important;transform:none!important;animation:bubbleLoop 4s infinite!important}.comment-bubble::after{display:block!important;top:auto!important;bottom:100%!important;left:50%!important;border-color:transparent transparent rgba(0,0,0,0.75) transparent!important} .item-card .price-box{justify-content:flex-end;gap:4px} .price-ref-row, .price-sale-row{display:inline-block} .price-ref{font-size:10px} .price-arrow{display:inline-block; font-size:10px} .price-sale{font-size:20px !important}
+      
+      /* スマホMENU設定: MENUボタン独立 */
+      .sale-nav-trigger { display: none !important; } /* PC用トリガー非表示 */
+      .mobile-menu-btn { display: flex; position: fixed; left: 10px; bottom: 90px; width: 50px; height: 50px; background: #333; color: #fff; border-radius: 50%; z-index: 10000; justify-content: center; align-items: center; font-size: 24px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); cursor: pointer; }
+      .sale-nav-container { transform: translateX(-110%); transition: transform 0.3s; left: 0; top: auto; bottom: 150px; height: auto; max-height: 60vh; overflow-y: auto; border-radius: 0 8px 8px 0; z-index: 9999; }
+      .sale-nav-container.mobile-open { transform: translateX(0); }
+    }${dynamicStyles}</style></head><body>${bodyContent}</body></html>`;
 
     navigator.clipboard.writeText(fullHTML);
-    alert("HTMLを作成しました！");
+    alert("HTMLを作成しました！(クリップボードにコピーしました)");
   };
 
   // ---------------------------------------------------------
-  // ▼ UIコンポーネント (デザイン刷新 - フッターボタン修正)
+  // ▼ UIコンポーネント
   // ---------------------------------------------------------
   
-  const PriceDisplay = ({ price, refPrice, isHero = false }: { price: string, refPrice: string, isHero?: boolean }) => (
-    <div className={`flex items-baseline gap-2 my-2 flex-wrap ${isHero ? 'justify-center' : 'justify-end'}`}>
-      {refPrice && <><span className={`text-gray-400 line-through ${isHero ? 'text-lg' : 'text-xs'}`}>{Number(refPrice).toLocaleString()}円</span><span className="text-gray-400 text-xs mx-1">➡</span></>}
-      <span className={`text-red-600 font-bold ${isHero ? 'text-3xl' : 'text-base'}`}>{Number(price).toLocaleString()}円</span>
-    </div>
-  );
+  const PriceDisplay = ({ price, refPrice, isHero = false }: { price: string, refPrice: string, isHero?: boolean }) => {
+    const p = Number(price.replace(/,/g, ''));
+    const r = Number(refPrice.replace(/,/g, ''));
+    const diff = r > p ? r - p : 0;
+    
+    return (
+      <div className={`flex flex-col items-end justify-center w-full`}>
+        {/* 修正: 常にバッジ枠を出力して高さを確保 (visibility制御) + 中央揃え */}
+        <div className={`text-red-600 text-xs font-bold px-2 py-0.5 mb-0 transform -rotate-2 animate-pulse w-full text-center`} style={{ visibility: diff > 0 ? 'visible' : 'hidden' }}>
+           \ {diff > 0 ? diff.toLocaleString() : '0'}円OFF /
+        </div>
+        <div className="flex items-baseline gap-2 flex-wrap justify-end mt-[-2px]">
+          {refPrice && <div className="flex items-center gap-1"><span className="text-gray-400 line-through text-xs">{Number(refPrice).toLocaleString()}円</span><span className="text-gray-400 text-xs">➡</span></div>}
+          <span className={`text-red-600 font-bold ${isHero ? 'text-3xl' : 'text-lg'}`}>{Number(price).toLocaleString()}円</span>
+        </div>
+      </div>
+    );
+  };
 
   const ImageLinkInput = ({ img, link, onChange, label = "画像" }: { img: string, link: string, onChange: (i: string, l: string) => void, label?: string }) => (
     <div className="flex flex-col gap-2 mb-3 p-3 border border-gray-200 bg-gray-50 rounded-lg shadow-sm hover:border-blue-200 transition-colors">
@@ -455,13 +604,11 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-slate-100 p-8 pb-40 font-sans text-slate-700">
-      {/* ★ローディング画面 */}
       {isLoading && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center backdrop-blur-sm">
           <div className="bg-white p-6 rounded-xl shadow-2xl flex flex-col items-center">
             <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mb-4"></div>
             <p className="text-gray-700 font-bold animate-pulse">データを読み込んでいます...</p>
-            <p className="text-xs text-gray-400 mt-2">※画面を閉じないでください</p>
           </div>
         </div>
       )}
@@ -472,7 +619,7 @@ export default function Home() {
             <span className="text-2xl">🛍️</span>
             <div>
               <h1 className="text-xl font-bold">楽天スーパーセール作成ツール</h1>
-              <p className="text-xs opacity-90">Ver 1.8 - 2025/11/26</p>
+              <p className="text-xs opacity-90">Ver 1.0 - 2025-11-28</p>
             </div>
           </div>
           <button 
@@ -483,7 +630,6 @@ export default function Home() {
           </button>
         </header>
 
-        {/* 初期設定カード */}
         <div className="bg-white p-6 rounded-xl shadow-md mb-10 border border-gray-200">
           <div className="flex justify-between items-center mb-6 border-b border-gray-100 pb-4">
             <h2 className="font-bold text-lg flex items-center gap-2 text-gray-700">
@@ -497,6 +643,9 @@ export default function Home() {
               </label>
               <button onClick={saveProject} className="bg-blue-50 border border-blue-200 text-blue-600 hover:bg-blue-100 text-xs px-3 py-2 rounded font-bold transition-colors flex items-center gap-2 shadow-sm">
                 💾 JSON保存
+              </button>
+              <button onClick={exportRegisteredProducts} className="bg-orange-50 border border-orange-200 text-orange-600 hover:bg-orange-100 text-xs px-3 py-2 rounded font-bold transition-colors flex items-center gap-2 shadow-sm">
+                📤 商品リスト出力 (CSV)
               </button>
             </div>
           </div>
@@ -541,13 +690,12 @@ export default function Home() {
         </div>
 
         {/* ブロックリスト */}
-        <div className="space-y-8 pb-32">
+        <div className="space-y-8 pb-24">
           {blocks.map((block, index) => {
             const style = BLOCK_STYLES[block.type] || BLOCK_STYLES.product_grid;
             return (
             <div key={block.id} className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden transition-all hover:shadow-xl">
               
-              {/* ブロックヘッダー */}
               <div className={`p-3 flex justify-between items-center border-b ${style.border} ${style.bg}`}>
                 <div className="flex items-center gap-3">
                   <span className="bg-white/80 px-2 py-0.5 rounded text-xs font-bold text-gray-500 shadow-sm">#{index + 1}</span>
@@ -629,7 +777,7 @@ export default function Home() {
                         </div>
                       ))}
                     </div>
-                    <button onClick={() => updateBlock(block.id, b => ({ ...b, banners: [...(b as BannerListBlock).banners, { imageUrl: "", linkUrl: "" }] } as BannerListBlock))} className="w-full py-3 bg-white border-2 border-dashed border-orange-200 text-orange-500 font-bold rounded-xl hover:bg-orange-50 hover:border-orange-300 transition-all">+ バナーを追加</button>
+                    <button onClick={() => updateBlock(block.id, b => ({ ...b, banners: [...(b as BannerListBlock).banners, { imageUrl: "", linkUrl: "", startTime: "", endTime: "" }] } as BannerListBlock))} className="w-full py-3 bg-white border-2 border-dashed border-orange-200 text-orange-500 font-bold rounded-xl hover:bg-orange-50 hover:border-orange-300 transition-all">+ バナーを追加</button>
                   </div>
                 )}
 
@@ -655,17 +803,24 @@ export default function Home() {
                   <>
                     <input value={block.title} onChange={e => updateBlock(block.id, b => ({ ...b, title: e.target.value } as ProductGridBlock))} className="text-2xl font-bold w-full border-b-2 border-gray-100 mb-6 p-2 focus:border-red-400 outline-none transition-colors text-gray-700 placeholder-gray-300" placeholder="カテゴリ名を入力 (例: 半額セール)"/>
                     
-                    <div className="flex gap-3 mb-6 items-center bg-gray-50 p-3 rounded-lg border border-gray-100">
-                      <span className="text-xs font-bold bg-white text-gray-500 px-2 py-1 rounded border border-gray-200">背景色</span>
-                      {BG_COLORS.map(c => (
-                        <button 
-                          key={c.code}
-                          onClick={() => updateBlock(block.id, b => ({ ...b, bgColor: c.code } as ProductGridBlock))}
-                          className={`w-8 h-8 rounded-full border-2 transition-all hover:scale-110 hover:shadow-md ${block.bgColor === c.code ? 'border-blue-500 ring-2 ring-blue-200 scale-110' : 'border-gray-200'}`}
-                          style={{ backgroundColor: c.code }}
-                          title={c.name}
-                        />
-                      ))}
+                    <div className="flex flex-wrap gap-4 mb-6 bg-gray-50 p-4 rounded-lg border border-gray-100">
+                       <div className="flex items-center gap-2">
+                         <span className="text-xs font-bold text-gray-500">背景色</span>
+                         <div className="flex gap-1 items-center bg-white p-1 rounded border border-gray-200">
+                           <input type="color" value={block.bgColor || "#ffffff"} onChange={e => updateBlock(block.id, b => ({ ...b, bgColor: e.target.value } as ProductGridBlock))} className="w-6 h-6 cursor-pointer"/>
+                           <input type="text" value={block.bgColor} onChange={e => updateBlock(block.id, b => ({ ...b, bgColor: e.target.value } as ProductGridBlock))} className="text-xs w-20 outline-none border-b"/>
+                         </div>
+                       </div>
+                       <div className="flex-1">
+                         <span className="text-xs font-bold text-gray-500 block mb-1">商品名から削除するワード (カンマ区切り)</span>
+                         <input 
+                           type="text" 
+                           value={block.nameFilter || ""}
+                           onChange={e => updateBlock(block.id, b => ({ ...b, nameFilter: e.target.value } as ProductGridBlock))}
+                           placeholder="【送料無料】, 期間限定, あす楽"
+                           className="w-full border border-gray-200 text-xs p-2 rounded focus:ring-2 focus:ring-red-100 outline-none"
+                         />
+                       </div>
                     </div>
 
                     <div className="flex flex-col md:flex-row gap-6 items-start -mx-6 px-6 py-8 border-t border-b border-gray-100" style={{ backgroundColor: block.bgColor, transition: 'background-color 0.3s' }}>
@@ -688,7 +843,7 @@ export default function Home() {
                                           {p.comment && <PreviewBubble text={p.comment} />}
                                       </div>
                                       <input type="text" placeholder="吹き出しコメント..." value={p.comment} onChange={(e) => updateHeroProductComment(block.id, i, e.target.value)} className="border border-yellow-200 p-2 w-full mb-3 text-xs bg-yellow-50 rounded-lg focus:ring-2 focus:ring-yellow-200 focus:bg-white outline-none transition-all"/>
-                                      <p className="text-xs line-clamp-2 h-8 mb-2 text-gray-600 font-medium">{p.name}</p>
+                                      <p className="text-xs line-clamp-2 h-8 mb-2 text-gray-600 font-medium">{cleanName(p.name, block.nameFilter)}</p>
                                       <PriceDisplay price={p.price} refPrice={p.refPrice} isHero={true} />
                                       
                                       <div className="mt-3 flex justify-center gap-2 opacity-50 group-hover/item:opacity-100 transition-opacity">
@@ -751,11 +906,30 @@ export default function Home() {
                               <div className="group relative">
                                 <img src={p.imageUrl} className="w-full h-20 object-contain mb-2 rounded"/>
                                 {p.comment && <PreviewBubble text={p.comment} />}
-                                <p className="h-[60px] overflow-hidden text-left mb-1 leading-tight text-gray-500">{p.name}</p>
+                                <p className="h-[40px] overflow-hidden text-left mb-1 leading-tight text-gray-500">{cleanName(p.name, block.nameFilter)}</p>
                               </div>
                               <input type="text" placeholder="吹き出し..." value={p.comment} onChange={(e) => { const newProds = [...block.gridProducts]; newProds[i] = { ...p, comment: e.target.value }; updateBlock(block.id, b => ({ ...b, gridProducts: newProds } as ProductGridBlock)); }} className="border p-1 w-full mb-1 text-[10px] bg-yellow-50 rounded focus:ring-1 focus:ring-yellow-400 outline-none"/>
                               <PriceDisplay price={p.price} refPrice={p.refPrice} isHero={false} />
                               
+                              {/* プレビュー用ボタン (修正: 赤背景固定 & 光沢アニメ) */}
+                              <div className="mt-2 text-center w-full">
+                                <span className="grid-btn-preview inline-block font-bold rounded cursor-default" style={{ 
+                                    backgroundColor: '#bf0000', 
+                                    color: '#ffffff',
+                                    whiteSpace: 'nowrap', 
+                                    width: '100%', 
+                                    display: 'block',
+                                    padding: '2px 0', 
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    fontSize: '11px',
+                                    position: 'relative'
+                                }}>
+                                  <span style={{position: 'relative', zIndex: 2}}>商品ページへ</span>
+                                  <div className="absolute top-0 left-[-100%] w-1/2 h-full bg-gradient-to-r from-transparent via-white/50 to-transparent -skew-x-12 animate-[shine_3s_infinite] z-10"></div>
+                                </span>
+                              </div>
+
                               <div className="flex justify-between mt-2 border-t border-gray-100 pt-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                 <button onClick={() => moveProduct(block.id, i, -1)} disabled={i===0} className="text-gray-300 hover:text-blue-500 disabled:opacity-0 transition-colors">◀</button>
                                 <div className="flex gap-2">
@@ -791,6 +965,19 @@ export default function Home() {
                            </div>
                         </div>
                       </div>
+                      {/* ★追加: スマホ用コメント設定UI */}
+                      <div className="border-l pl-4 ml-4">
+                        <label className="flex items-center gap-2 cursor-pointer mb-2">
+                          <input type="checkbox" checked={block.mobileCommentShow !== false} onChange={(e) => updateBlock(block.id, b => ({ ...b, mobileCommentShow: e.target.checked } as ProductGridBlock))} className="cursor-pointer"/>
+                          <span className="font-bold text-xs">📱 スマホでコメントを表示</span>
+                        </label>
+                        {block.mobileCommentShow !== false && (
+                           <div className="flex gap-4 text-xs">
+                             <div>表示: <input type="number" value={block.mobileCommentDuration || 3} onChange={(e) => updateBlock(block.id, b => ({ ...b, mobileCommentDuration: Number(e.target.value) } as ProductGridBlock))} className="border p-1 w-10 text-center"/>秒</div>
+                             <div>消灯: <input type="number" value={block.mobileCommentInterval || 1} onChange={(e) => updateBlock(block.id, b => ({ ...b, mobileCommentInterval: Number(e.target.value) } as ProductGridBlock))} className="border p-1 w-10 text-center"/>秒</div>
+                           </div>
+                        )}
+                      </div>
                     </div>
                   </>
                 )}
@@ -800,7 +987,7 @@ export default function Home() {
           })}
         </div>
 
-        {/* フローティング・ツールバー (修正: 横長ボタンで文字切れ解消) */}
+        {/* フローティング・ツールバー */}
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-lg border border-gray-200 p-2 rounded-2xl shadow-2xl z-50 flex gap-2 items-center px-4 overflow-x-auto max-w-[95vw]">
             {Object.entries(BLOCK_STYLES).map(([key, style]) => (
               <button 
@@ -821,7 +1008,6 @@ export default function Home() {
               <span className="text-xs">書き出し</span>
             </button>
         </div>
-
       </div>
     </div>
   );
