@@ -23,7 +23,8 @@ const BG_COLORS = [
 ];
 
 type Product = { 
-  code: string; name: string; price: string; refPrice: string; imageUrl: string; url: string; comment: string; 
+  code: string; name: string; price: string; refPrice: string; imageUrl: string; url: string; comment: string;
+  isTaxExcluded?: boolean; // ★追加: 税別フラグ
 };
 type ImageItem = { imageUrl: string; linkUrl: string; };
 type BlockType = 'top_image' | 'banner_list' | 'coupon_list' | 'product_grid' | 'custom_html' | 'spacer' | 'timer_banner';
@@ -48,7 +49,7 @@ interface ProductGridBlock extends BaseBlock {
   heroMode: 'product' | 'banner'; 
   heroProducts: Product[]; 
   heroBanners: ImageItem[];
-  heroBanner?: ImageItem; // ★修正: ビルドエラー回避のため追加（旧データ互換用）
+  heroBanner?: ImageItem; 
   gridProducts: Product[];
   // ボタン設定
   bottomButtonText?: string;
@@ -95,15 +96,12 @@ export default function Home() {
     const adjustFontSize = () => {
       const buttons = document.querySelectorAll('.grid-btn-preview');
       buttons.forEach((btn: any) => {
-        // 初期設定: 1行強制、パディング極小
         btn.style.whiteSpace = 'nowrap'; 
         btn.style.width = '100%';
-        
         let size = 13;
         if(btn.innerText.length > 10) size = 10;
         else if(btn.innerText.length > 8) size = 11;
         else if(btn.innerText.length > 6) size = 12;
-        
         btn.style.fontSize = size + 'px';
       });
     };
@@ -121,6 +119,12 @@ export default function Home() {
     const integerPart = Math.floor(taxIn);
     const decimalPart = taxIn - integerPart;
     return Math.floor(decimalPart * 10 + 0.00001) >= TAX_THRESHOLD ? (integerPart + 1).toString() : integerPart.toString();
+  };
+
+  // ★追加: 税別フラグに応じて価格を返す関数
+  const getDisplayPrice = (price: string, isTaxExcluded?: boolean) => {
+    if (isTaxExcluded) return price.replace(/,/g, ''); // 税別の場合はそのまま
+    return calcTax(price); // 税込み計算
   };
 
   const cleanName = (name: string, filterStr?: string) => {
@@ -157,11 +161,12 @@ export default function Home() {
     return {
       code: code, 
       name: mergedName || "名称未設定",
-      price: calcTax(mergedPrice), 
-      refPrice: mergedRefPrice ? calcTax(mergedRefPrice) : "",
+      price: mergedPrice, // ★変更: ここでは生の価格を保持し、表示時に計算
+      refPrice: mergedRefPrice, // 同上
       imageUrl: finalImageUrl, 
       url: `https://item.rakuten.co.jp/${currentShopId}/${code}/`, 
-      comment: "" 
+      comment: "",
+      isTaxExcluded: false // デフォルトは税込み計算する
     };
   };
 
@@ -206,13 +211,13 @@ export default function Home() {
       
       const newHeroProducts = b.heroProducts.map(hp => {
         const found = findProductData(hp.code, data, currentShopId);
-        if (found) return { ...found, comment: hp.comment };
+        if (found) return { ...found, comment: hp.comment, isTaxExcluded: hp.isTaxExcluded };
         return hp;
       });
 
       const newGrid = b.gridProducts.map(p => {
         const found = findProductData(p.code, data, currentShopId);
-        if (found) return { ...found, comment: p.comment };
+        if (found) return { ...found, comment: p.comment, isTaxExcluded: p.isTaxExcluded };
         return p;
       });
       return { ...b, heroProducts: newHeroProducts, gridProducts: newGrid };
@@ -237,12 +242,18 @@ export default function Home() {
   const exportRegisteredProducts = () => {
     if (blocks.length === 0) { alert("出力する商品がありません"); return; }
     const rows: any[] = [];
-    rows.push(["ブロック名", "タイプ", "商品管理番号", "商品名", "価格(税込)", "商品URL"]);
+    rows.push(["ブロック名", "タイプ", "商品管理番号", "商品名", "価格(表示額)", "商品URL"]);
     blocks.forEach(b => {
       if (b.type === 'product_grid') {
         const pg = b as ProductGridBlock;
-        pg.heroProducts.forEach(p => rows.push([pg.title, "目玉", p.code, p.name, p.price, p.url]));
-        pg.gridProducts.forEach(p => rows.push([pg.title, "通常", p.code, p.name, p.price, p.url]));
+        pg.heroProducts.forEach(p => {
+            const price = getDisplayPrice(p.price, p.isTaxExcluded);
+            rows.push([pg.title, "目玉", p.code, p.name, price, p.url]);
+        });
+        pg.gridProducts.forEach(p => {
+            const price = getDisplayPrice(p.price, p.isTaxExcluded);
+            rows.push([pg.title, "通常", p.code, p.name, price, p.url]);
+        });
       }
     });
     const csvContent = Papa.unparse(rows);
@@ -282,6 +293,10 @@ export default function Home() {
               if (!b.bottomButtonText) b.bottomButtonText = "もっと見る";
               if (!b.bottomButtonBgColor) b.bottomButtonBgColor = "#bf0000";
               if (!b.bottomButtonTextColor) b.bottomButtonTextColor = "#ffffff";
+              
+              // ★税別フラグの初期化 (既存データ対応)
+              b.heroProducts = b.heroProducts.map((p: Product) => ({...p, isTaxExcluded: p.isTaxExcluded || false}));
+              b.gridProducts = b.gridProducts.map((p: Product) => ({...p, isTaxExcluded: p.isTaxExcluded || false}));
             }
             if (b.type === 'timer_banner') {
               if (!b.banners) {
@@ -370,7 +385,9 @@ export default function Home() {
     updateBlock(blockId, (block) => {
       const b = block as ProductGridBlock;
       const newHeroes = [...b.heroProducts];
-      newHeroes[index] = { ...p, comment: newHeroes[index].comment }; 
+      // 既存の税別設定を維持
+      const isTaxExcluded = newHeroes[index].isTaxExcluded;
+      newHeroes[index] = { ...p, comment: newHeroes[index].comment, isTaxExcluded }; 
       return { ...b, heroProducts: newHeroes };
     });
   };
@@ -379,6 +396,15 @@ export default function Home() {
       const b = block as ProductGridBlock;
       const newHeroes = [...b.heroProducts];
       newHeroes[index] = { ...newHeroes[index], comment };
+      return { ...b, heroProducts: newHeroes };
+    });
+  };
+  // ★追加: 目玉商品の税別切り替え
+  const toggleHeroProductTax = (blockId: string, index: number) => {
+    updateBlock(blockId, (block) => {
+      const b = block as ProductGridBlock;
+      const newHeroes = [...b.heroProducts];
+      newHeroes[index] = { ...newHeroes[index], isTaxExcluded: !newHeroes[index].isTaxExcluded };
       return { ...b, heroProducts: newHeroes };
     });
   };
@@ -399,7 +425,18 @@ export default function Home() {
     updateBlock(blockId, (block) => {
       const b = block as ProductGridBlock;
       const newGrid = [...b.gridProducts];
-      newGrid[index] = { ...p, comment: newGrid[index].comment }; 
+      // 既存の税別設定を維持
+      const isTaxExcluded = newGrid[index].isTaxExcluded;
+      newGrid[index] = { ...p, comment: newGrid[index].comment, isTaxExcluded }; 
+      return { ...b, gridProducts: newGrid };
+    });
+  };
+  // ★追加: 通常商品の税別切り替え
+  const toggleProductTax = (blockId: string, index: number) => {
+    updateBlock(blockId, (block) => {
+      const b = block as ProductGridBlock;
+      const newGrid = [...b.gridProducts];
+      newGrid[index] = { ...newGrid[index], isTaxExcluded: !newGrid[index].isTaxExcluded };
       return { ...b, gridProducts: newGrid };
     });
   };
@@ -411,12 +448,11 @@ export default function Home() {
     const popupScript = popupImage ? `<style>.overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);display:none;justify-content:center;align-items:center;z-index:10000}.popup-banner{background:transparent;padding:0;text-align:center;position:relative}.popup-banner img{width:900px;max-width:95%;display:block;margin:0 auto}.popup-banner .close-btn{display:inline-block;margin-top:15px;padding:10px 30px;font-size:24px;font-weight:bold;color:#fff;background:#333;border-radius:8px;cursor:pointer;box-shadow:0 0 6px rgba(0,0,0,0.4);transition:0.2s ease}.popup-banner .close-btn:hover{background:#555}</style><div class="overlay" id="popup"><div class="popup-banner">${popupLink?`<a href="${popupLink}" target="_blank">`:''}<img src="${popupImage}" border="0">${popupLink?`</a>`:''}<div class="close-btn" id="closeBtn">× 閉じる</div></div></div><script>window.onload=function(){let shownCount=localStorage.getItem("popupShown_${shopId}");shownCount=shownCount?parseInt(shownCount,10):0;if(shownCount<3){document.getElementById("popup").style.display="flex";localStorage.setItem("popupShown_${shopId}",shownCount+1);}};document.getElementById("closeBtn").onclick=function(){document.getElementById("popup").style.display="none"};</script>` : '';
     const timerScript = `<script>(function(){var now=new Date().getTime();var banners=document.querySelectorAll('.timer-banner');if(banners.length===0)return;banners.forEach(function(banner){var s=banner.getAttribute('data-start');var e=banner.getAttribute('data-end');var start=s?new Date(s).getTime():null;var end=e?new Date(e).getTime():null;if(start&&now<start){banner.style.display='none';return}if(end&&now>end){banner.style.display='none';return}banner.style.display='block'})})();</script>`;
     
-    // ★修正: menuScriptの定義を追加 (Runtime Error解消)
+    // ★修正: menuScriptの定義を追加
     const menuScript = `<script>function toggleMobileMenu(){var n=document.getElementById('sale-nav-container');n.classList.toggle('mobile-open');}</script>`;
 
     const autoTextSizeScript = `<script>function fitText(){document.querySelectorAll('.grid-btn').forEach(b=>{b.style.whiteSpace='nowrap';b.style.width='100%';b.style.display='block';b.style.overflow='hidden';b.style.textOverflow='ellipsis'; var len=b.innerText.length; var s=12; if(len>10)s=10; else if(len>8)s=11; b.style.fontSize=s+'px';})}; window.addEventListener('load',fitText);window.addEventListener('resize',fitText);</script>`;
 
-    // ★HTML構造修正: mobile-menu-btnを追加、sale-nav-containerにID付与
     let bodyContent = `<div id="rakuten-sale-app">${popupScript}
     <div id="mobile-menu-btn" class="mobile-menu-btn" onclick="toggleMobileMenu()">≡</div>
     <div id="sale-nav-container" class="sale-nav-container"><div class="sale-nav-trigger">MENU</div><div class="sale-nav-list"><div style="font-weight:bold;border-bottom:2px solid #bf0000;padding-bottom:5px;margin-bottom:5px">INDEX</div>${categoryBlocks.map(b => `<a href="#cat-${b.id}">${b.title}</a>`).join('')}</div></div>`;
@@ -496,12 +532,16 @@ export default function Home() {
         
         if (pg.heroMode === 'product' && pg.heroProducts.length > 0) {
           pg.heroProducts.forEach(product => {
+            // ★修正: 税別ならそのまま、そうでなければ税込計算
             const pPrice = Number(product.price.replace(/,/g, ''));
-            const pRef = product.refPrice ? Number(product.refPrice.replace(/,/g, '')) : 0;
-            const diff = (pRef > pPrice) ? (pRef - pPrice) : 0;
+            const displayPrice = product.isTaxExcluded ? pPrice : Math.floor(pPrice * 1.1);
             
-            // ★修正: OFFバッジ中央・赤文字・斜め, ボタン光沢・コンパクト
-            bodyContent += `<div class="hero-area"><div class="hero-img-container"><img src="${product.imageUrl}">${product.comment ? `<div class="comment-bubble">${product.comment}</div>` : ''}</div><div class="hero-info"><div class="hero-name">${cleanName(product.name, filter)}</div><div class="price-box" style="display:flex; flex-direction:column; align-items:center; gap:0px; margin-bottom:10px;"><div style="height:24px; display:flex; align-items:center; width:100%; justify-content:center;">${diff > 0 ? `<span class="price-off-pop-top">\\ ${diff.toLocaleString()}円OFF /</span>` : `<span class="price-off-pop-top" style="visibility:hidden">\\ 0円OFF /</span>`}</div><div style="display:flex; align-items:baseline; justify-content:center; gap:5px; flex-wrap:wrap;">${product.refPrice ? `<span class="price-ref">${Number(product.refPrice).toLocaleString()}円</span><span class="price-arrow">➡</span>` : ''}<span class="price-sale">${Number(product.price).toLocaleString()}円</span></div></div><a href="${product.url}" target="_blank" class="btn-buy" style="text-decoration:none !important; background:#bf0000 !important; padding:2px 40px; overflow:hidden;"><span style="position:relative; z-index:2;">商品ページへ</span><div class="shine"></div></a></div></div>`;
+            const pRef = product.refPrice ? Number(product.refPrice.replace(/,/g, '')) : 0;
+            const displayRef = product.isTaxExcluded && pRef ? pRef : (pRef ? Math.floor(pRef * 1.1) : 0);
+            
+            const diff = (displayRef > displayPrice) ? (displayRef - displayPrice) : 0;
+            
+            bodyContent += `<div class="hero-area"><div class="hero-img-container"><img src="${product.imageUrl}">${product.comment ? `<div class="comment-bubble">${product.comment}</div>` : ''}</div><div class="hero-info"><div class="hero-name">${cleanName(product.name, filter)}</div><div class="price-box" style="display:flex; flex-direction:column; align-items:center; gap:0px; margin-bottom:10px;"><div style="height:24px; display:flex; align-items:center; width:100%; justify-content:center;">${diff > 0 ? `<span class="price-off-pop-top">\\ ${diff.toLocaleString()}円OFF /</span>` : `<span class="price-off-pop-top" style="visibility:hidden">\\ 0円OFF /</span>`}</div><div style="display:flex; align-items:baseline; justify-content:center; gap:5px; flex-wrap:wrap;">${displayRef ? `<span class="price-ref">${displayRef.toLocaleString()}円</span><span class="price-arrow">➡</span>` : ''}<span class="price-sale">${displayPrice.toLocaleString()}円</span></div></div><a href="${product.url}" target="_blank" class="btn-buy" style="text-decoration:none !important; background:#bf0000 !important;"><span style="position:relative; z-index:2;">商品ページへ</span><div class="shine"></div></a></div></div>`;
           });
         } else if (pg.heroMode === 'banner') {
            const banners = pg.heroBanners || [];
@@ -513,16 +553,21 @@ export default function Home() {
 
         if (block.gridProducts.length > 0) {
           bodyContent += `<div class="grid-area">${block.gridProducts.map(p => {
+             // ★修正: 税別ならそのまま、そうでなければ税込計算
              const pPrice = Number(p.price.replace(/,/g, ''));
+             const displayPrice = p.isTaxExcluded ? pPrice : Math.floor(pPrice * 1.1);
+             
              const pRef = p.refPrice ? Number(p.refPrice.replace(/,/g, '')) : 0;
-             const diff = (pRef > pPrice) ? (pRef - pPrice) : 0;
-             // ★修正: OFFバッジ中央・赤文字・斜め, ボタン光沢・コンパクト(padding 0)
-             return `<a href="${p.url}" target="_blank" class="item-card" style="text-decoration:none; border:1px solid #f0f0f0; display:block; background:#fff; padding:10px; border-radius:6px;"><div class="img-wrap" style="position:relative; margin-bottom:5px;"><img src="${p.imageUrl}" style="width:100%; height:180px; object-fit:contain;">${p.comment ? `<div class="comment-bubble">${p.comment}</div>` : ''}</div><div class="grid-name" style="font-size:13px; height:40px; overflow:hidden; color:#555; line-height:1.4; text-align:left; margin-bottom:0;">${cleanName(p.name, filter)}</div><div style="text-align:center; margin-top:0; height:16px; display:flex; justify-content:center; align-items:center;">${diff > 0 ? `<span class="price-off-pop-grid">\\ ${diff.toLocaleString()}円OFF /</span>` : `<span class="price-off-pop-grid" style="visibility:hidden">\\ 0円OFF /</span>`}</div><div class="price-box" style="display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:baseline; gap:4px; margin-top:-2px;">${p.refPrice ? `<span class="price-ref" style="font-size:10px; color:#999; text-decoration:line-through;">${Number(p.refPrice).toLocaleString()}円</span><span class="price-arrow" style="font-size:10px; color:#999;">➡</span>` : ''}<span class="price-sale" style="font-size:20px; font-weight:bold; color:#bf0000; line-height:1.2;">${Number(p.price).toLocaleString()}円</span></div><div class="grid-btn" style="background:#bf0000 !important; color:#ffffff !important; text-align:center; padding:2px 0 !important; margin-top:4px; border-radius:4px; font-size:11px; font-weight:bold; white-space:nowrap; overflow:hidden; position:relative;"><span style="position:relative; z-index:2;">商品ページへ</span><div class="shine"></div></div></a>`;
+             const displayRef = p.isTaxExcluded && pRef ? pRef : (pRef ? Math.floor(pRef * 1.1) : 0);
+
+             const diff = (displayRef > displayPrice) ? (displayRef - displayPrice) : 0;
+             
+             return `<a href="${p.url}" target="_blank" class="item-card" style="text-decoration:none; border:1px solid #f0f0f0; display:block; background:#fff; padding:10px; border-radius:6px;"><div class="img-wrap" style="position:relative; margin-bottom:5px;"><img src="${p.imageUrl}" style="width:100%; height:180px; object-fit:contain;">${p.comment ? `<div class="comment-bubble">${p.comment}</div>` : ''}</div><div class="grid-name" style="font-size:13px; height:40px; overflow:hidden; color:#555; line-height:1.4; text-align:left; margin-bottom:0;">${cleanName(p.name, filter)}</div><div style="text-align:center; margin-top:0; height:16px; display:flex; justify-content:center; align-items:center;">${diff > 0 ? `<span class="price-off-pop-grid">\\ ${diff.toLocaleString()}円OFF /</span>` : `<span class="price-off-pop-grid" style="visibility:hidden">\\ 0円OFF /</span>`}</div><div class="price-box" style="display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:baseline; gap:4px; margin-top:-2px;">${displayRef ? `<span class="price-ref" style="font-size:10px; color:#999; text-decoration:line-through;">${displayRef.toLocaleString()}円</span><span class="price-arrow" style="font-size:10px; color:#999;">➡</span>` : ''}<span class="price-sale" style="font-size:20px; font-weight:bold; color:#bf0000; line-height:1.2;">${displayPrice.toLocaleString()}円</span></div><div class="grid-btn" style="background:#bf0000 !important; color:#ffffff !important; text-align:center; padding:4px 0 !important; margin-top:4px; border-radius:4px; font-size:11px; font-weight:bold; white-space:nowrap; overflow:hidden; position:relative;"><span style="position:relative; z-index:2;">商品ページへ</span><div class="shine"></div></div></a>`;
           }).join('')}</div>`;
         }
 
         if (block.bottomButtonLink) {
-          // ★修正: ボタンをコンパクトに (padding:12px 60px, font-size:16px)
+          // ボタン: コンパクト化
           bodyContent += `<div style="text-align:center; margin-top:30px;"><a href="${block.bottomButtonLink}" class="section-bottom-btn" target="_blank" style="background-color: ${btnBg}; color: ${btnTxt} !important; display:inline-block; padding:12px 60px; border-radius:50px; font-weight:bold; text-decoration:none !important; font-size:16px;">${block.bottomButtonText || 'もっと見る'}</a></div>`;
         }
       }
@@ -531,29 +576,18 @@ export default function Home() {
     });
     bodyContent += `</div>${timerScript}${autoTextSizeScript}${menuScript}`;
 
-    // ★CSS修正: 既存CSS + スマホボタン改善 + MENU改善
     const fullHTML = `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>楽天スーパーセール特設ページ</title><style>body{margin:0;padding:0;font-family:"Hiragino Kaku Gothic ProN","Meiryo",sans-serif;line-height:1.6;color:#333}*{box-sizing:border-box}img{max-width:100%;height:auto;display:block;margin:0 auto;border:none!important;outline:none!important}#rakuten-sale-app a{text-decoration:none!important;color:inherit!important;transition:opacity 0.3s;display:block;border:none!important;outline:none!important;box-shadow:none!important}#rakuten-sale-app a:hover{opacity:0.9;text-decoration:none!important;border:none!important}.sale-content-inner{max-width:900px;margin:0 auto;padding:0 10px;position:relative}.sale-nav-container{position:fixed;left:0;top:20%;z-index:9999;transform:translateX(-100%);transition:transform 0.3s;display:flex}.sale-nav-container:hover{transform:translateX(0)}
-    /* PC用MENUボタン改善: 幅広・文字切れ防止 */
     .sale-nav-trigger{background:#333;color:#fff;width:60px;height:auto;padding:15px 5px;display:flex;align-items:center;justify-content:center;font-weight:bold;cursor:pointer;border-radius:0 8px 8px 0;writing-mode:vertical-rl;letter-spacing:2px;box-shadow:2px 2px 5px rgba(0,0,0,0.2);position:absolute;left:100%;top:0;white-space:nowrap;}
-    .sale-nav-list{background:rgba(255,255,255,0.95);border:1px solid #ddd;border-left:none;box-shadow:2px 2px 10px rgba(0,0,0,0.1);padding:15px;min-width:200px;display:flex;flex-direction:column;gap:10px;border-radius:0 0 8px 0}.sale-nav-list a{display:block;font-size:14px;color:#333!important;padding:8px;border-bottom:1px dashed #eee!important}.sale-nav-list a:hover{color:#bf0000!important;padding-left:12px}.top-image{margin-bottom:20px;width:100%}.banner-stack{display:flex;flex-direction:column;gap:15px;margin-bottom:30px}.coupon-grid{display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:30px}.cat-section-wrapper{width:100%;padding:40px 0;margin-bottom:0}.cat-title{text-align:center;font-size:26px;font-weight:bold;margin:0 0 40px;padding:10px 0;letter-spacing:3px;position:relative;color:inherit;animation:titlePulse 3s ease-in-out infinite}.cat-title::after{content:'';display:block;width:50px;height:3px;background:#bf0000;margin:15px auto 0;transition:width 0.3s;animation:lineSway 3s ease-in-out infinite}.hero-area{display:flex;border:1px solid #eee;margin-bottom:30px;background:#fff;box-shadow:0 4px 12px rgba(0,0,0,0.08);border-radius:8px;color:#333;position:relative;overflow:visible!important;z-index:10}.hero-area:hover{z-index:50}.hero-img-container{width:50%;position:relative}.hero-img-container img{width:100%;height:100%;object-fit:cover;border-radius:8px 0 0 8px}.hero-info{width:50%;padding:30px;display:flex;flex-direction:column;justify-content:center;text-align:center}.hero-name{font-size:18px;font-weight:bold;margin-bottom:15px}.price-box{margin:15px 0;display:flex;justify-content:center;align-items:baseline;gap:10px;flex-wrap:wrap;align-content:center}.price-ref{color:#999;text-decoration:line-through;font-size:14px}.price-arrow{color:#ccc;font-size:12px;margin:0 5px;display:inline-block}.price-sale{color:#bf0000;font-weight:bold;font-family:Arial}.hero-info .price-sale{font-size:36px}.btn-buy{background:linear-gradient(to bottom,#d90000,#bf0000);color:white!important;padding:12px 40px;border-radius:30px;font-weight:bold;display:inline-block;margin-top:15px;text-decoration:none!important;position:relative;overflow:hidden}.grid-area{display:grid;grid-template-columns:repeat(4,1fr);gap:15px;color:#333}.item-card{border:1px solid #f0f0f0;padding:10px;text-align:center;background:#fff;display:flex;flex-direction:column;justify-content:space-between;height:100%;border-radius:6px;transition:all 0.3s;position:relative;top:0;overflow:visible!important;z-index:10}.item-card:hover{top:-5px;border-color:#ffd1d1;box-shadow:0 10px 20px rgba(0,0,0,0.1);z-index:50}.img-wrap{position:relative;width:100%;margin-bottom:8px}.img-wrap img{width:100%;height:180px;object-fit:contain}.grid-name{font-size:13px;height:40px;line-height:1.5;overflow:hidden;margin-bottom:5px;text-align:left;color:#555;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}.item-card .price-box{justify-content:flex-end;padding-right:5px;margin:5px 0 0}.item-card .price-sale{font-size:18px}.section-bottom-btn{display:inline-block;padding:12px 60px;border-radius:50px;font-weight:bold;text-decoration:none!important;box-shadow:0 5px 15px rgba(0,0,0,0.2);transition:transform 0.2s;font-size:16px}.section-bottom-btn:hover{transform:translateY(-2px);opacity:0.9}.comment-bubble{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);margin-bottom:10px;background:#333;color:#fff;padding:8px 12px;border-radius:6px;font-size:12px;font-weight:bold;width:180px;text-align:center;pointer-events:none;z-index:9999;box-shadow:0 4px 10px rgba(0,0,0,0.2);opacity:0;visibility:hidden;transition:all 0.3s}.comment-bubble::after{content:'';position:absolute;top:100%;left:50%;margin-left:-6px;border-width:6px;border-style:solid;border-color:#333 transparent transparent transparent}.item-card:hover .comment-bubble,.hero-img-container:hover .comment-bubble{opacity:1;visibility:visible;transform:translateX(-50%) translateY(-5px)}.spacer{width:100%} /* ★赤文字のみバッジ(中央) */ .price-off-pop-top, .price-off-pop-grid { display:inline-block; color:#bf0000; font-weight:bold; font-size:12px; animation:pop 1s infinite alternate; transform:rotate(-2deg); width:100%; text-align:center; } .price-off-pop-top{ font-size:16px; margin-bottom:8px; } .price-off-pop-grid{ font-size:11px; margin:0 0 2px 0; } /* ★ボタン光沢 */ .shine { position:absolute; top:0; left:-100%; width:50%; height:100%; background:linear-gradient(to right,transparent,rgba(255,255,255,0.5),transparent); transform:skewX(-25deg); animation:shine 3s infinite; z-index:1; } @keyframes shine{0%{left:-100%;opacity:0}20%{opacity:0.5}40%{left:200%;opacity:0}100%{left:200%;opacity:0}} @keyframes bubbleLoop{0%,75%{opacity:1;visibility:visible}76%,100%{opacity:0;visibility:hidden}}@keyframes titlePulse{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}@keyframes lineSway{0%,100%{width:50px}50%{width:100px}}@keyframes pop{0%{transform:rotate(-2deg) scale(1)}100%{transform:rotate(-2deg) scale(1.1)}}
-    /* PCではスマホ用ボタン非表示 */
+    .sale-nav-list{background:rgba(255,255,255,0.95);border:1px solid #ddd;border-left:none;box-shadow:2px 2px 10px rgba(0,0,0,0.1);padding:15px;min-width:200px;display:flex;flex-direction:column;gap:10px;border-radius:0 0 8px 0}.sale-nav-list a{display:block;font-size:14px;color:#333!important;padding:8px;border-bottom:1px dashed #eee!important}.sale-nav-list a:hover{color:#bf0000!important;padding-left:12px}.top-image{margin-bottom:20px;width:100%}.banner-stack{display:flex;flex-direction:column;gap:15px;margin-bottom:30px}.coupon-grid{display:grid;grid-template-columns:1fr 1fr;gap:15px;margin-bottom:30px}.cat-section-wrapper{width:100%;padding:40px 0;margin-bottom:0}.cat-title{text-align:center;font-size:26px;font-weight:bold;margin:0 0 40px;padding:10px 0;letter-spacing:3px;position:relative;color:inherit;animation:titlePulse 3s ease-in-out infinite}.cat-title::after{content:'';display:block;width:50px;height:3px;background:#bf0000;margin:15px auto 0;transition:width 0.3s;animation:lineSway 3s ease-in-out infinite}.hero-area{display:flex;border:1px solid #eee;margin-bottom:30px;background:#fff;box-shadow:0 4px 12px rgba(0,0,0,0.08);border-radius:8px;color:#333;position:relative;overflow:visible!important;z-index:10}.hero-area:hover{z-index:50}.hero-img-container{width:50%;position:relative}.hero-img-container img{width:100%;height:100%;object-fit:cover;border-radius:8px 0 0 8px}.hero-info{width:50%;padding:30px;display:flex;flex-direction:column;justify-content:center;text-align:center}.hero-name{font-size:18px;font-weight:bold;margin-bottom:15px}.price-box{margin:15px 0;display:flex;justify-content:center;align-items:baseline;gap:10px;flex-wrap:wrap;align-content:center}.price-ref{color:#999;text-decoration:line-through;font-size:14px}.price-arrow{color:#ccc;font-size:12px;margin:0 5px;display:inline-block}.price-sale{color:#bf0000;font-weight:bold;font-family:Arial}.hero-info .price-sale{font-size:36px}.btn-buy{background:linear-gradient(to bottom,#d90000,#bf0000);color:white!important;padding:12px 40px;border-radius:30px;font-weight:bold;display:inline-block;margin-top:15px;text-decoration:none!important;position:relative;overflow:hidden}.grid-area{display:grid;grid-template-columns:repeat(4,1fr);gap:15px;color:#333}.item-card{border:1px solid #f0f0f0;padding:10px;text-align:center;background:#fff;display:flex;flex-direction:column;justify-content:space-between;height:100%;border-radius:6px;transition:all 0.3s;position:relative;top:0;overflow:visible!important;z-index:10}.item-card:hover{top:-5px;border-color:#ffd1d1;box-shadow:0 10px 20px rgba(0,0,0,0.1);z-index:50}.img-wrap{position:relative;width:100%;margin-bottom:8px}.img-wrap img{width:100%;height:180px;object-fit:contain}.grid-name{font-size:13px;height:40px;line-height:1.5;overflow:hidden;margin-bottom:5px;text-align:left;color:#555;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}.item-card .price-box{justify-content:flex-end;padding-right:5px;margin:5px 0 0}.item-card .price-sale{font-size:18px}.section-bottom-btn{display:inline-block;padding:12px 60px;border-radius:50px;font-weight:bold;text-decoration:none!important;box-shadow:0 5px 15px rgba(0,0,0,0.2);transition:transform 0.2s;font-size:16px}.section-bottom-btn:hover{transform:translateY(-2px);opacity:0.9}.comment-bubble{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);margin-bottom:10px;background:#333;color:#fff;padding:8px 12px;border-radius:6px;font-size:12px;font-weight:bold;width:180px;text-align:center;pointer-events:none;z-index:9999;box-shadow:0 4px 10px rgba(0,0,0,0.2);opacity:0;visibility:hidden;transition:all 0.3s}.comment-bubble::after{content:'';position:absolute;top:100%;left:50%;margin-left:-6px;border-width:6px;border-style:solid;border-color:#333 transparent transparent transparent}.item-card:hover .comment-bubble,.hero-img-container:hover .comment-bubble{opacity:1;visibility:visible;transform:translateX(-50%) translateY(-5px)}.spacer{width:100%} .price-off-pop-top, .price-off-pop-grid { display:inline-block; color:#bf0000; font-weight:bold; font-size:12px; animation:pop 1s infinite alternate; transform:rotate(-2deg); width:100%; text-align:center; } .price-off-pop-top{ font-size:16px; margin-bottom:8px; } .price-off-pop-grid{ font-size:11px; margin:0 0 2px 0; } .shine { position:absolute; top:0; left:-100%; width:50%; height:100%; background:linear-gradient(to right,transparent,rgba(255,255,255,0.5),transparent); transform:skewX(-25deg); animation:shine 3s infinite; z-index:1; } @keyframes shine{0%{left:-100%;opacity:0}20%{opacity:0.5}40%{left:200%;opacity:0}100%{left:200%;opacity:0}} @keyframes bubbleLoop{0%,75%{opacity:1;visibility:visible}76%,100%{opacity:0;visibility:hidden}}@keyframes titlePulse{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}@keyframes lineSway{0%,100%{width:50px}50%{width:100px}}@keyframes pop{0%{transform:rotate(-2deg) scale(1)}100%{transform:rotate(-2deg) scale(1.1)}}
     .mobile-menu-btn { display: none; }
-    
     @media screen and (max-width:1024px){
       .hero-area{flex-direction:column}.hero-img-container{width:100%}.hero-img-container img{border-radius:8px 8px 0 0}.hero-info{width:100%}.grid-area{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important}.grid-name{font-size:12px;height:40px}.banner-grid-2,.banner-grid-3,.banner-grid-4{grid-template-columns:repeat(2,1fr)!important}.price-off{display:block;font-size:12px;text-align:right;margin-top:4px}.comment-bubble{top:auto!important;bottom:0!important;left:0!important;width:100%!important;margin:0!important;border-radius:0 0 4px 4px!important;background:rgba(0,0,0,0.75)!important;transform:none!important;animation:bubbleLoop 4s infinite!important}.comment-bubble::after{display:block!important;top:auto!important;bottom:100%!important;left:50%!important;border-color:transparent transparent rgba(0,0,0,0.75) transparent!important} .item-card .price-box{justify-content:flex-end;gap:4px} .price-ref-row, .price-sale-row{display:inline-block} .price-ref{font-size:10px} .price-arrow{display:inline-block; font-size:10px} .price-sale{font-size:20px !important}
-      
-      /* スマホMENU設定: MENUボタン独立 */
-      .sale-nav-trigger { display: none !important; } /* PC用トリガー非表示 */
+      .sale-nav-trigger { display: none !important; }
       .mobile-menu-btn { display: flex; position: fixed; left: 10px; bottom: 90px; width: 50px; height: 50px; background: #333; color: #fff; border-radius: 50%; z-index: 10000; justify-content: center; align-items: center; font-size: 24px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); cursor: pointer; }
       .sale-nav-container { transform: translateX(-110%); transition: transform 0.3s; left: 0; top: auto; bottom: 150px; height: auto; max-height: 60vh; overflow-y: auto; border-radius: 0 8px 8px 0; z-index: 9999; }
       .sale-nav-container.mobile-open { transform: translateX(0); }
     }${dynamicStyles}</style>
-    <script>
-      function toggleMobileMenu(){
-        var n=document.getElementById('sale-nav-container');
-        n.classList.toggle('mobile-open');
-      }
-    </script>
+    <script>function toggleMobileMenu(){var n=document.getElementById('sale-nav-container');n.classList.toggle('mobile-open');}</script>
     </head><body>${bodyContent}</body></html>`;
 
     navigator.clipboard.writeText(fullHTML);
@@ -564,20 +598,24 @@ export default function Home() {
   // ▼ UIコンポーネント
   // ---------------------------------------------------------
   
-  const PriceDisplay = ({ price, refPrice, isHero = false }: { price: string, refPrice: string, isHero?: boolean }) => {
+  const PriceDisplay = ({ price, refPrice, isHero = false, isTaxExcluded = false }: { price: string, refPrice: string, isHero?: boolean, isTaxExcluded?: boolean }) => {
     const p = Number(price.replace(/,/g, ''));
     const r = Number(refPrice.replace(/,/g, ''));
-    const diff = r > p ? r - p : 0;
+    
+    // 表示用価格（税別フラグならそのまま、そうでなければ1.1倍）
+    const displayPrice = isTaxExcluded ? p : Math.floor(p * 1.1);
+    const displayRef = isTaxExcluded && r ? r : (r ? Math.floor(r * 1.1) : 0);
+
+    const diff = (displayRef > displayPrice) ? (displayRef - displayPrice) : 0;
     
     return (
       <div className={`flex flex-col items-end justify-center w-full`}>
-        {/* 中央・斜め・赤文字のみ (高さ揃えのためinvisible使用) */}
         <div className={`text-red-600 text-xs font-bold px-2 py-0.5 mb-0 transform -rotate-2 animate-pulse w-full text-center`} style={{ visibility: diff > 0 ? 'visible' : 'hidden' }}>
            \ {diff > 0 ? diff.toLocaleString() : '0'}円OFF /
         </div>
         <div className="flex items-baseline gap-2 flex-wrap justify-end mt-[-2px]">
-          {refPrice && <div className="flex items-center gap-1"><span className="text-gray-400 line-through text-xs">{Number(refPrice).toLocaleString()}円</span><span className="text-gray-400 text-xs">➡</span></div>}
-          <span className={`text-red-600 font-bold ${isHero ? 'text-3xl' : 'text-lg'}`}>{Number(price).toLocaleString()}円</span>
+          {displayRef > 0 && <div className="flex items-center gap-1"><span className="text-gray-400 line-through text-xs">{displayRef.toLocaleString()}円</span><span className="text-gray-400 text-xs">➡</span></div>}
+          <span className={`text-red-600 font-bold ${isHero ? 'text-3xl' : 'text-lg'}`}>{displayPrice.toLocaleString()}円</span>
         </div>
       </div>
     );
@@ -846,8 +884,14 @@ export default function Home() {
                                       </div>
                                       <input type="text" placeholder="吹き出しコメント..." value={p.comment} onChange={(e) => updateHeroProductComment(block.id, i, e.target.value)} className="border border-yellow-200 p-2 w-full mb-3 text-xs bg-yellow-50 rounded-lg focus:ring-2 focus:ring-yellow-200 focus:bg-white outline-none transition-all"/>
                                       <p className="text-xs line-clamp-2 h-8 mb-2 text-gray-600 font-medium">{cleanName(p.name, block.nameFilter)}</p>
-                                      <PriceDisplay price={p.price} refPrice={p.refPrice} isHero={true} />
+                                      <PriceDisplay price={p.price} refPrice={p.refPrice} isHero={true} isTaxExcluded={p.isTaxExcluded} />
                                       
+                                      {/* ★追加: 税別チェックボックス */}
+                                      <label className="flex items-center justify-center gap-1 text-[10px] text-gray-500 mt-1 cursor-pointer">
+                                          <input type="checkbox" checked={p.isTaxExcluded || false} onChange={() => toggleHeroProductTax(block.id, i)} className="cursor-pointer"/>
+                                          <span>税別 (CSV価格をそのまま表示)</span>
+                                      </label>
+
                                       <div className="mt-3 flex justify-center gap-2 opacity-50 group-hover/item:opacity-100 transition-opacity">
                                           <button onClick={() => updateHeroProductInfo(block.id, i, prompt("新しい商品管理番号", p.code) || p.code)} className="bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors">🖊 変更</button>
                                           <button onClick={() => removeHeroProduct(block.id, i)} className="bg-gray-50 hover:bg-red-100 text-gray-400 hover:text-red-600 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors">🗑</button>
@@ -911,17 +955,22 @@ export default function Home() {
                                 <p className="h-[40px] overflow-hidden text-left mb-1 leading-tight text-gray-500">{cleanName(p.name, block.nameFilter)}</p>
                               </div>
                               <input type="text" placeholder="吹き出し..." value={p.comment} onChange={(e) => { const newProds = [...block.gridProducts]; newProds[i] = { ...p, comment: e.target.value }; updateBlock(block.id, b => ({ ...b, gridProducts: newProds } as ProductGridBlock)); }} className="border p-1 w-full mb-1 text-[10px] bg-yellow-50 rounded focus:ring-1 focus:ring-yellow-400 outline-none"/>
-                              <PriceDisplay price={p.price} refPrice={p.refPrice} isHero={false} />
+                              <PriceDisplay price={p.price} refPrice={p.refPrice} isHero={false} isTaxExcluded={p.isTaxExcluded} />
+
+                              {/* ★追加: 税別チェックボックス */}
+                              <label className="flex items-center justify-center gap-1 text-[9px] text-gray-400 mt-1 cursor-pointer">
+                                  <input type="checkbox" checked={p.isTaxExcluded || false} onChange={() => toggleProductTax(block.id, i)} className="cursor-pointer"/>
+                                  <span>税別</span>
+                              </label>
                               
-                              {/* プレビュー用ボタン (修正: 赤背景固定 & 光沢アニメ & パディング極小) */}
                               <div className="mt-2 text-center w-full">
                                 <span className="grid-btn-preview inline-block font-bold rounded cursor-default" style={{ 
-                                    backgroundColor: '#bf0000', 
-                                    color: '#ffffff',
+                                    backgroundColor: block.bottomButtonBgColor || '#bf0000', 
+                                    color: block.bottomButtonTextColor || '#ffffff',
                                     whiteSpace: 'nowrap', 
                                     width: '100%', 
                                     display: 'block',
-                                    padding: '2px 0', // コンパクト化
+                                    padding: '2px 0',
                                     overflow: 'hidden',
                                     textOverflow: 'ellipsis',
                                     fontSize: '11px',
@@ -1010,7 +1059,6 @@ export default function Home() {
               <span className="text-xs">書き出し</span>
             </button>
         </div>
-
       </div>
     </div>
   );
