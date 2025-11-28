@@ -557,7 +557,7 @@ export default function Home() {
     </head><body>${bodyContent}</body></html>`;
 
     navigator.clipboard.writeText(fullHTML);
-    alert("HTMLを作成しました！\n(Ver11.3 エラー修正＆ボタン最適化)");
+    alert("HTMLを作成しました！\n(クリップボードにコピーしました)");
   };
 
   // ---------------------------------------------------------
@@ -621,7 +621,7 @@ export default function Home() {
             <span className="text-2xl">🛍️</span>
             <div>
               <h1 className="text-xl font-bold">楽天スーパーセール作成ツール</h1>
-              <p className="text-xs opacity-90">Ver 11.3 - Final Fix</p>
+              <p className="text-xs opacity-90">Ver 1.0 - 2025-11-28</p>
             </div>
           </div>
           <button 
